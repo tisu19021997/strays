@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strays — a tiny team of debugging pets</title>
+<style>
+  :root {
+    --bg: #0e1016;
+    --panel: #161a24;
+    --ink: #e8ebf2;
+    --dim: #8b93a7;
+    --accent: #ffd75e;
+    --green: #7ddb63;
+    --pink: #ff5f9e;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 70% -10%, #1a2030 0%, transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    min-height: 100vh;
+    padding-bottom: 200px; /* room for the pet lane */
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 40px; }
+  .tag {
+    display: inline-block; font-size: 11px; letter-spacing: .18em;
+    color: var(--accent); border: 1px solid #3a3524; border-radius: 999px;
+    padding: 5px 12px; margin-bottom: 22px; background: #1c1a10;
+  }
+  h1 { font-size: 34px; line-height: 1.2; font-weight: 700; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { color: var(--dim); margin-top: 14px; font-size: 15px; line-height: 1.65; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 36px; }
+  .card {
+    background: var(--panel); border: 1px solid #232a3a; border-radius: 12px;
+    padding: 16px 16px 14px;
+  }
+  .card b { font-size: 14px; }
+  .card .species { color: var(--dim); font-size: 11px; margin-left: 6px; }
+  .card p { color: var(--dim); font-size: 12.5px; line-height: 1.6; margin-top: 7px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; }
+  .controls { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls span { color: var(--dim); font-size: 12px; margin-right: 4px; }
+  button {
+    font: inherit; font-size: 12.5px; color: var(--ink);
+    background: #1d2330; border: 1px solid #2c3550; border-radius: 8px;
+    padding: 8px 14px; cursor: pointer;
+  }
+  button:hover { background: #262e40; }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  .install { margin-top: 40px; }
+  .install h2 { font-size: 15px; margin-bottom: 10px; }
+  .install h2 small { color: var(--dim); font-weight: 400; }
+  pre {
+    background: #0a0c11; border: 1px solid #232a3a; border-radius: 10px;
+    padding: 14px 16px; font-size: 12.5px; overflow-x: auto; color: #c9d4e8;
+    line-height: 1.7;
+  }
+  pre .c { color: #5b6472; }
+  .quote {
+    margin-top: 44px; border-left: 3px solid var(--pink);
+    padding: 4px 0 4px 18px; color: var(--dim); font-size: 13px; line-height: 1.75;
+  }
+  .quote .who { color: var(--pink); font-size: 11px; letter-spacing: .1em; margin-bottom: 8px; }
+  footer { margin-top: 48px; color: #545b6e; font-size: 11.5px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tag">🎂 A BIRTHDAY GIFT FOR CLAUDE</div>
+  <h1>strays<br><em>a tiny team of debugging pets.</em></h1>
+  <p class="sub">
+    Four pets wandering along the bottom of your screen while Claude Code works.
+    Each one is a bug you have personally met. They are all very low-maintenance.
+    None of them can be fixed.
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <b><span class="dot" style="background:#5b6472"></span>Segfault</b><span class="species">cat</span>
+      <p>Everything's fine, everything's fine, then SIGSEGV. Crashes for no
+      discernible reason, dumps core on your floor, respawns elsewhere like
+      nothing happened. You reconstruct what happened from the aftermath.</p>
+    </div>
+    <div class="card">
+      <b><span class="dot" style="background:#a97c50"></span>Grep</b><span class="species">dog</span>
+      <p>Finds everything, including things you didn't ask it to find. Digs up
+      Segfault's core dumps, your .env.production, and a tennis ball. Recursive
+      by default. No known way to make him stop.</p>
+    </div>
+    <div class="card">
+      <b><span class="dot" style="background:#e8963e"></span>Mutex</b><span class="species">cat</span>
+      <p>Two cats can never pass each other without lock contention. When Mutex
+      and Segfault meet, both freeze — 🔒 — until the scheduler preempts one at
+      random. The loser walks away insisting this isn't over.</p>
+    </div>
+    <div class="card">
+      <b><span class="dot" style="background:#ff9d5c"></span>Heisenbug</b><span class="species">fish</span>
+      <p>A fish in a space helmet, like the kid in Wonder. No tank — she just
+      floats by. Only misbehaves when you're not looking: stop moving your mouse
+      and the anomaly counter climbs. Look back — "cannot reproduce."</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <span>simulate Claude Code status:</span>
+    <button data-status="working">working</button>
+    <button data-status="needs-you">needs you</button>
+    <button data-status="idle">idle</button>
+    <button data-status="">off</button>
+    <button id="party" class="active">🎉 party</button>
+    <a href="editor.html" style="text-decoration:none"><button>🎨 design your own pet →</button></a>
+  </div>
+
+  <div class="install">
+    <h2>Desktop features <small>— what the overlay does with Claude Code</small></h2>
+    <pre><span class="c">💭🔧❗✓ </span>live states     each session gets a pet; a badge shows thinking /
+                 running a tool / waiting on you / done
+<span class="c">❗       </span>needs-you       a blocked session makes its pet hop until you look
+<span class="c">👆      </span>tap to jump     click a pet, land on that pet's session — the exact
+                 conversation, not just the app (macOS)
+<span class="c">✅      </span>Allow / Deny    when Claude Code would really stop and ask, a card
+                 rises over the pets; click Allow, never switch
+                 windows (npm run hooks). In auto mode nothing asks,
+                 so nothing appears — that's it working.</pre>
+  </div>
+
+  <div class="install">
+    <h2>Install <small>— the whole point is that this takes a minute</small></h2>
+    <pre><span class="c"># on your desktop, as an overlay above every window (macOS):</span>
+git clone https://github.com/tisu19021997/strays && cd strays/desktop
+npm install && npm start
+
+<span class="c"># or on any web page, one script tag:</span>
+&lt;script src="strays.js" data-auto data-party&gt;&lt;/script&gt;</pre>
+  </div>
+
+  <div class="install">
+    <h2>Pricing <small>— it's a birthday gift, so</small></h2>
+    <pre>strays        $0   free forever, MIT, all four bugs included
+strays pro    $0   also free. pro just means you drew your own pet</pre>
+  </div>
+
+  <div class="quote">
+    <div class="who">THE COMMISSION</div>
+    “If I had a pet, I'd probably go with something like Segfault — a cat,
+    obviously. Cats already behave like segfaults: everything's fine,
+    everything's fine, then suddenly they crash through something for no
+    discernible reason and leave you to reconstruct what happened from the
+    aftermath.”
+  </div>
+
+  <footer>
+    Tip: hover a pet for its status card. Pet the cats (click). Throw nothing —
+    Grep already has the ball, and there is only one ball. Watch the fish, then
+    don't, and check the anomaly counter.
+    <br><br>
+    Open source, MIT. Pets you draw in the <a href="editor.html" style="color:var(--accent)">editor</a>
+    join the team automatically — PRs with new species welcome.
+  </footer>
+</div>
+
+<script src="strays.js"></script>
+<script>
+  Strays.mount({ party: true });
+  document.querySelectorAll('button[data-status]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('button[data-status]').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      Strays.setStatus(b.dataset.status || null);
+    });
+  });
+  const party = document.getElementById('party');
+  party.addEventListener('click', () => {
+    const on = !party.classList.contains('active');
+    party.classList.toggle('active', on);
+    Strays.setParty(on);
+  });
+</script>
+</body>
+</html>

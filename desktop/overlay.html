@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+
+  /* Crew-style approval cards. The lane is the positioning context and every
+     card is placed on it directly: overlay.js writes a viewport x into
+     card.style.left, which an offset from a centred flow position is not.
+     A card with no pet to point at keeps the 50% here and stays centred. */
+  #cards {
+    position: fixed; left: 0; right: 0; bottom: 96px; height: 0;
+    pointer-events: none;
+  }
+  .card {
+    pointer-events: auto;
+    position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    /* shrink-to-fit would measure the gap to the right edge instead, so a card
+       anchored near that edge would squeeze itself thin */
+    width: max-content; max-width: 460px;
+    background: #f7e08a; border: 2px solid #17181c; border-radius: 14px;
+    box-shadow: 0 4px 0 #17181c;
+    padding: 10px 12px;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .card .cmd { display: flex; flex-direction: column; gap: 2px; }
+  .card .head { display: flex; align-items: baseline; gap: 6px; }
+  .card .cmd b { font-size: 12px; color: #17181c; }
+  .card .meta {
+    font-size: 10.5px; color: #6f6446;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card .cmd code {
+    font-size: 11.5px; color: #3a3320;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 430px; display: block;
+  }
+  .card .btns { display: flex; gap: 8px; margin-top: 8px; }
+  .card button {
+    font: inherit; font-size: 12px; font-weight: 700; color: #fff;
+    border: 2px solid #17181c; border-radius: 999px; padding: 4px 16px;
+    cursor: pointer; box-shadow: 0 2px 0 #17181c;
+  }
+  .card button:active { transform: translateY(2px); box-shadow: none; }
+  .card .allow { background: #2e9e44; }
+  .card .deny { background: #d9364f; }
+</style>
+</head>
+<body>
+<div id="cards"></div>
+<script src="requests.js"></script>
+<script src="../strays.js"></script>
+<script src="overlay.js"></script>
+</body>
+</html>

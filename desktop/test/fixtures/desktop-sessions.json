@@ -1,0 +1,93 @@
+[
+  {
+    "sessionId": "local_f9e12694-b57e-c05d-c08e-52b311883313",
+    "cliSessionId": "5e2955b9-58ee-ed30-3d38-6ee0b37efe64",
+    "cwd": "/Users/testuser/Projects/acme-web",
+    "originCwd": "/Users/testuser/Projects/acme-web",
+    "title": "sample session 0",
+    "titleSource": "auto",
+    "createdAt": 1700000000000,
+    "lastActivityAt": 1700000900000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-4-7[1m]"
+  },
+  {
+    "sessionId": "local_577c42a0-21cd-5670-c997-b38baf53a839",
+    "cliSessionId": "08682cc2-ae9b-5b79-4e66-8355acc3d7ba",
+    "cwd": "/Users/testuser/Projects/acme-web/.worktrees/feature-a",
+    "originCwd": "/Users/testuser/Projects/acme-web/.worktrees/feature-a",
+    "title": "sample session 1",
+    "titleSource": "auto",
+    "createdAt": 1700000001000,
+    "lastActivityAt": 1700000901000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-5"
+  },
+  {
+    "sessionId": "local_1681f1b2-72d9-01a0-b2e3-ad2bb7bbc514",
+    "cliSessionId": "d2ec6422-95cd-03db-90fc-0b5454142a77",
+    "cwd": "/Users/testuser/Projects/toybox",
+    "originCwd": "/Users/testuser/Projects/toybox",
+    "title": "sample session 2",
+    "titleSource": "auto",
+    "createdAt": 1700000002000,
+    "lastActivityAt": 1700000902000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-4-7"
+  },
+  {
+    "sessionId": "local_45f5f6b3-231f-b91c-45f4-20e20ea35878",
+    "cliSessionId": "0e7fff53-a930-2949-ee49-b726640f9cc4",
+    "cwd": "/Users/testuser/Projects/toybox/.worktrees/feature-b",
+    "originCwd": "/Users/testuser/Projects/toybox/.worktrees/feature-b",
+    "title": "sample session 3",
+    "titleSource": "auto",
+    "createdAt": 1700000003000,
+    "lastActivityAt": 1700000903000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-4-7"
+  },
+  {
+    "sessionId": "local_3d663897-66e5-f474-7365-62684c54c7a3",
+    "cliSessionId": "a0edcd4b-cd17-5e44-959c-e1f8987cda06",
+    "cwd": "/Users/testuser/Projects/notes-cli",
+    "originCwd": "/Users/testuser/Projects/notes-cli",
+    "title": "sample session 4",
+    "titleSource": "auto",
+    "createdAt": 1700000004000,
+    "lastActivityAt": 1700000904000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-4-7"
+  },
+  {
+    "sessionId": "local_635a731f-4b40-a728-f2ab-aedbd6186dbc",
+    "cliSessionId": "635a731f-4b40-a728-f2ab-aedbd6186dbc",
+    "cwd": "/Users/testuser/Projects/acme-web",
+    "originCwd": "/Users/testuser/Projects/acme-web",
+    "title": "sample session 5",
+    "titleSource": "auto",
+    "createdAt": 1700000005000,
+    "lastActivityAt": 1700000905000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-opus-5[1m]"
+  },
+  {
+    "sessionId": "local_2ec83dbd-a6a1-74f5-0070-413532b52a87",
+    "cliSessionId": "2ec83dbd-a6a1-74f5-0070-413532b52a87",
+    "cwd": "/Users/testuser/Projects/toybox",
+    "originCwd": "/Users/testuser/Projects/toybox",
+    "title": "sample session 6",
+    "titleSource": "auto",
+    "createdAt": 1700000006000,
+    "lastActivityAt": 1700000906000,
+    "isArchived": false,
+    "permissionMode": "auto",
+    "model": "claude-fable-5"
+  }
+]

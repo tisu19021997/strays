@@ -1,0 +1,18 @@
+{
+  "name": "strays-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "strays \u2014 a tiny team of debugging pets living above your windows, reacting to Claude Code.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "stop": "kill \"$(cat \"${STRAYS_HOME:-$HOME/.strays}/overlay.alive\" 2>/dev/null)\" 2>/dev/null || true",
+    "restart": "npm run stop; sleep 1; npm start",
+    "hooks": "node setup-hooks.js",
+    "unhook": "node setup-hooks.js --remove"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}
