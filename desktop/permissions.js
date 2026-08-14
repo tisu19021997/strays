@@ -236,8 +236,24 @@ function targetPath(payload) {
   return '';
 }
 
+/*
+ * Rules are written with forward slashes; Windows hands us backslashes and a
+ * drive letter. Everything below matches in the POSIX spelling, so both sides
+ * are converted to it before they ever meet.
+ *
+ * This is load-bearing rather than tidy. A `deny` rule that cannot match is a
+ * rule that is not enforced — and because the gate answers PreToolUse with an
+ * explicit decision, a card wrongly raised over a denied path lets a click on
+ * Allow walk straight past the rule written to prevent it.
+ */
+const toPosix = (p) => String(p || '').replace(/\\/g, '/');
+
+/* `/abs`, and `C:/abs` — which is the same claim spelled for a lettered drive */
+const DRIVE = /^[A-Za-z]:\//;
+const isAbsolutePath = (p) => p.startsWith('/') || DRIVE.test(p);
+
 /* gitignore-style: ** spans directories, * stops at one, ? is one character */
-function globToRegex(glob) {
+function globToRegex(glob, nocase) {
   let source = '';
   for (let i = 0; i < glob.length; i++) {
     const ch = glob[i];
@@ -253,10 +269,10 @@ function globToRegex(glob) {
     if (ch === '?') { source += '[^/]'; continue; }
     source += escapeRegex(ch);
   }
-  return new RegExp('^' + source + '$');
+  return new RegExp('^' + source + '$', nocase ? 'i' : '');
 }
 
-const joinPath = (dir, rest) => String(dir || '').replace(/\/+$/, '') + '/' + rest;
+const joinPath = (dir, rest) => toPosix(dir).replace(/\/+$/, '') + '/' + rest;
 
 /*
  * Claude Code's four path forms. `//abs` is filesystem-absolute, `~/x` is
@@ -267,10 +283,17 @@ const joinPath = (dir, rest) => String(dir || '').replace(/\/+$/, '') + '/' + re
  * layer that knows which file a rule came from.
  */
 function pathPatternMatches(pattern, payload, broad) {
-  const file = targetPath(payload);
+  const file = toPosix(targetPath(payload));
   if (!file) return false;
-  const home = String(process.env.HOME || os.homedir());
-  const absolute = file.startsWith('/') ? file : joinPath(payload.cwd, file);
+  const home = toPosix(process.env.HOME || os.homedir());
+  const absolute = isAbsolutePath(file) ? file : joinPath(payload.cwd, file);
+  /*
+   * Windows filenames are case-insensitive, and the case of the drive letter in
+   * particular is not stable between what the shell reports and what a rule was
+   * written with. The shape of the path is the tell — no platform check needed,
+   * which keeps this a pure function the whole matrix can be driven through.
+   */
+  const nocase = DRIVE.test(absolute);
 
   let globs;
   if (pattern.startsWith('//')) globs = [pattern.slice(1)];
@@ -281,7 +304,7 @@ function pathPatternMatches(pattern, payload, broad) {
     globs = [joinPath(payload.cwd, relative)];
     if (broad) globs.push('**/' + relative);
   }
-  return globs.some((glob) => globToRegex(glob).test(absolute));
+  return globs.some((glob) => globToRegex(toPosix(glob), nocase).test(absolute));
 }
 
 /* the forms of one sub-command a rule may be written against */

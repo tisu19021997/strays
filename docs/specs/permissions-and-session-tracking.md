@@ -244,13 +244,29 @@ user config, and returns a described action rather than performing one:
 Resolution order:
 
 1. A `jumpApp` pinned in config wins outright.
-2. A hit in the desktop-session index produces a deep link addressed to the
-   desktop app's own session identifier.
-3. A desktop-hosted session with no index entry falls back to the resume-style
+2. A hit in the desktop-session index whose record looks like it is already on
+   screen activates the desktop app without navigating, so that a multi-pane
+   layout survives the click.
+3. Any other hit in the index produces a deep link addressed to the desktop app's
+   own session identifier.
+4. A desktop-hosted session with no index entry falls back to the resume-style
    deep link keyed by the Claude Code session id.
-4. A CLI session activates its recorded host terminal, or the first running
+5. A CLI session activates its recorded host terminal, or the first running
    terminal from the known list.
-5. Anything else degrades to today's behaviour.
+6. Anything else degrades to today's behaviour.
+
+Step 2 exists because the deep link *navigates*: it replaces whatever the window
+is showing with the one conversation, which is the right thing when the session is
+somewhere else and destructive when it was already in front of you. Which panes
+are currently open cannot be read — the desktop app keeps that in
+`extraPanesByMode` inside its Chromium Local Storage leveldb, snappy compressed,
+in a private format with no compatibility promise, so building a click on it would
+break on a release nobody can see coming. Each session record does carry
+`lastFocusedAt`, and in a split layout the visible panes are all focused within
+minutes of each other, so a recent focus is treated as "probably on screen". It is
+a heuristic, and `jumpMode` (`auto` | `never` | `always`) is the escape hatch for
+anyone it misjudges. An archived conversation is never on screen whatever its
+focus timestamp says.
 
 **The index lookup is load-bearing and must not be skipped.** The desktop app's
 resume link imports a CLI session by deriving an identifier from the session

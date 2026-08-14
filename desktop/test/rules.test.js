@@ -295,6 +295,70 @@ test('an allow rule on a relative path is anchored at the working directory', ()
   );
 });
 
+// ------------------------------------------------------------- Windows paths
+/*
+ * On Windows every path arrives with backslashes and a drive letter, and neither
+ * survives matching that assumes POSIX. This is not cosmetic: a `deny` rule that
+ * cannot match is a rule that is not enforced, and because the gate answers
+ * PreToolUse with an explicit `allow`, clicking Allow on the card it wrongly
+ * raises walks straight past the rule the user wrote to stop exactly that.
+ */
+const winPayload = (file_path) => payload({
+  permission_mode: 'default',
+  tool_name: 'Edit',
+  cwd: 'C:\\Users\\testuser\\Projects\\demo',
+  tool_input: { file_path },
+});
+
+test('a deny rule on a path still bites when the path is a Windows one', () => {
+  // A deny is a refusal, not a question, so the honest answer is "no card" —
+  // but it has to be the deny rule that decided, not the Edit(**) allow beside
+  // it. If the deny cannot match, this call is allow-listed instead, and the
+  // card that is then raised lets a click on Allow walk past the rule.
+  const denied = rules({ allow: ['Edit(**)'], deny: ['Edit(secrets/**)'] });
+  const verdict = predictPrompt(
+    winPayload('C:\\Users\\testuser\\Projects\\demo\\secrets\\prod.pem'), denied,
+  );
+  assert.equal(verdict.prompts, false);
+  assert.match(verdict.reason, /deny/i, 'the deny rule must be what decided it');
+});
+
+test('an allow rule on a path is honoured for a Windows path', () => {
+  // the other half of the same bug: an allow rule that cannot match means a card
+  // for every single edit, each holding the tool call until it is answered
+  const allowed = rules({ allow: ['Edit(src/**)'] });
+  assert.equal(
+    predictPrompt(winPayload('C:\\Users\\testuser\\Projects\\demo\\src\\app.js'), allowed).prompts,
+    false,
+    'the project src is allow-listed however the path is spelled',
+  );
+  assert.equal(
+    predictPrompt(winPayload('C:\\Users\\testuser\\Projects\\demo\\vendor\\src\\app.js'), allowed).prompts,
+    true,
+    'and the anchoring still holds',
+  );
+});
+
+test('a Windows path is matched without regard to case', () => {
+  /*
+   * Windows filenames are case-insensitive, so `Secrets` and `secrets` are one
+   * directory and a rule written against either has to cover both. Matching
+   * case-sensitively there means a deny rule the user believes they wrote is
+   * quietly not in force. POSIX paths stay case-sensitive, because there
+   * `Secrets` and `secrets` really are two different directories.
+   */
+  const denied = rules({ allow: ['Edit(**)'], deny: ['Edit(Secrets/**)'] });
+
+  const win = predictPrompt(
+    winPayload('C:\\Users\\testuser\\Projects\\demo\\secrets\\prod.pem'), denied,
+  );
+  assert.match(win.reason, /deny/i, 'the same file in a different case is the same file');
+
+  const posix = predictPrompt(edit('/Users/testuser/Projects/demo/secrets/prod.pem'), denied);
+  assert.match(posix.reason, /allow/i,
+    'but on a case-sensitive filesystem they are genuinely different directories');
+});
+
 test('a single star stops at one path segment, a double star spans them', () => {
   // gitignore semantics: `src/*.js` is the files in src, `src/**/*.js` is the
   // tree under it. Collapsing the two turns a narrow allow rule into a broad one.
