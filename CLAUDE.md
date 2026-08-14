@@ -8,6 +8,8 @@ shell. Single source of truth: this file. `AGENTS.md` is a symlink to it.
 
 ```
 strays/
+├── package.json        the published package: the `strays` command and Electron
+├── bin/strays.js       that command — start, stop, restart, hooks, editor
 ├── strays.js           the whole engine — sprites, behaviour, canvas, public API
 ├── index.html          demo / landing page
 ├── editor.html         pixel editor + PNG import for custom pets
@@ -21,11 +23,16 @@ strays/
 
 ## Run
 
-- Overlay:   `cd desktop && npm start` (foreground; `STRAYS_DEBUG=1` for logs)
-- Stop:      `cd desktop && npm run stop`
-- Tests:     `cd desktop && npm test`
-- One file:  `cd desktop && node --test test/rules.test.js`
-- Approvals: `cd desktop && npm run hooks` (`npm run unhook` removes them)
+Everything runs from the repo root — Electron and the `strays` command both
+live in the root package, and `desktop/package.json` is only there to tell
+Electron which file to start.
+
+- Overlay:   `npm start` (foreground; `STRAYS_DEBUG=1` for logs)
+- Stop:      `npm run stop`
+- Tests:     `npm test` (bare `node --test`; a directory argument does not work)
+- One file:  `node --test desktop/test/rules.test.js`
+- Approvals: `npm run hooks` (`npm run unhook` removes them)
+- Installed: `npx strays`, or `npm i -g strays` — `bin/strays.js` is that entry
 
 ## Adding or customising a pet
 
@@ -58,12 +65,100 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
 - **An unrecognised Claude Code permission mode MUST stay silent.** Gating
   unknown modes once put a card and a 20-second hold on every tool call. Failing
   toward silence is deliberate; do not "fix" it.
+- **A session's age comes from the timestamps inside its transcript, never from
+  the file's mtime.** Claude Code appends `last-prompt`, `ai-title`,
+  `custom-title` and `mode` records long after a conversation ends, and none of
+  them carry a timestamp. Judging age by mtime therefore gave pets to
+  conversations whose last real message was *days* old, and they took slots from
+  the sessions actually running. `BOOKKEEPING` in `watcher.js` names the line
+  types that are writes but not activity; mtime is the fallback only for
+  transcripts that carry no timestamps at all.
+
+- **Nudging and having a pet are two different questions.** A trailing assistant
+  message only proves the turn ended; whether you are still in that window is not
+  written down anywhere. `waiting` is the nudge — it makes the pet hop and wear a
+  ❗ — and expires after `WAITING_MS`, or it cries wolf. The session then goes
+  `resting` until `RESTING_MS`: same pet, same name, no hopping. Conflating the
+  two broke it in both directions — every finished conversation nagged forever,
+  and then, once that was bounded, the conversation you were sitting there
+  reading lost its pet and its name after five minutes.
+
 - **Jump resolution must consult the desktop session index before falling back
   to `claude://resume`.** Resume derives the desktop session id by prefixing the
   uuid, which is right for a small minority of sessions; for the rest it creates
   a duplicate conversation instead of focusing the existing one.
+
+- **The `epitaxy` deep link navigates, which collapses a multi-pane layout into
+  the one conversation.** So a session that looks like it is already on screen
+  gets the app activated instead — see `LAYOUT_WINDOW_MS` and `looksOnScreen` in
+  `sessions.js`. Which panes are actually open lives in `extraPanesByMode` in the
+  desktop app's Chromium leveldb, snappy compressed and with no compatibility
+  promise; `lastFocusedAt` on each session record is the honest proxy. The tray's
+  "Clicking a pet" submenu writes `jumpMode` for anyone the heuristic misjudges.
 - **Hooks are read at session start.** After `npm run hooks`, already-open
   Claude Code sessions keep the hooks they started with.
+- **The lane's chrome is one column per pet, two tiers at most.** A pet's
+  nameplate *expands in place* on hover — it never raises a second label. The
+  speech bubble sits above the nameplate, anchored to `pet.chromeTop`. Three
+  boxes over one pet is how the quote ended up drawn straight through the
+  session name. All chrome is drawn in its own pass after the world, so a
+  drifting particle cannot land on a label.
+
+- **Nothing in the lane may be white or translucent.** It floats over whatever
+  window happens to be underneath: the old white speech bubble was invisible
+  over a light one. Surfaces are opaque, built with `pixelPlate()` — flat fill,
+  1px dark edge, corners knocked out by a pixel, same as the sprites. A bubble
+  takes its fill from the speaking pet's own `pal[1]`, which is also what says
+  who is talking.
+
+- **Paths are matched in POSIX form, and platform branches need three arms.**
+  `permissions.js` normalises rules and files through `toPosix()` and counts
+  `C:/…` as absolute; matching goes case-insensitive only when the path carries a
+  drive letter. A Windows path rule that cannot match is a `deny` that is not in
+  force, and the card wrongly raised in its place lets a click on **Allow** past
+  it. Relatedly, `if darwin … else …` sends Windows down the Linux path — that is
+  how managed settings ended up being read from `C:\etc\claude-code\…`.
+
+- **"Is anyone watching?" cannot be answered from the lane.** Heisenbug only
+  misbehaves unobserved, and the engine infers that from a mousemove over its own
+  canvas — fine on a web page, exactly backwards in the overlay, where the canvas
+  is a 190px strip nobody points at. Someone working all day never counted, so
+  the fish teleported across the screen every couple of seconds for the whole
+  session. `main.js` answers it from `powerMonitor.getSystemIdleTime()` and pushes
+  it in via `Strays.setObserved()`. Keep `AWAY_SECONDS` generous: idle time
+  measures input, not attention, and reading a long reply is minutes of it.
+
+- **A throw inside the draw loop used to blank the whole lane, silently.** `tick`
+  re-arms itself through `requestAnimationFrame`, and the re-arm was the last
+  statement, so one exception ended the animation for good — the canvas kept
+  whatever half-frame had been painted, and nothing on screen said why. It is now
+  in a `finally`, so a bad frame costs one frame and is logged (rate-limited to
+  one line per 300, counted in `world.badFrames`). **That is a net, not a
+  licence**: the three faults it has caught were all real bugs, and all of them
+  presented as *"the pets disappeared, only their shadows are left"* — the shadow
+  is painted before the sprite, so the freeze lands between them. Keep every
+  sprite set going through `spriteSet()`, and if you add a state to `drawPet`'s
+  switch, add it to `DRAWN_STATES` in `test/pets-binding.test.js`.
+
+- **The sprite cache is keyed by object identity, not by content.**
+  `spriteBitmap()` stamps a lazy `_k` on each grid and palette, so a palette
+  written inline at a call site is a *new* key every frame — a fresh offscreen
+  canvas, cached forever. Segfault's glitch did this with its two chromatic
+  ghosts and leaked ~265 canvases a minute; after 77 minutes the renderer was at
+  854 MB, Chromium stopped handing out 2D contexts, and `getContext('2d')`
+  returning null threw the loop dead. Palettes and grids passed to `drawGrid()`
+  must be module-level constants — `GLITCH_RED`/`GLITCH_BLUE` exist for that
+  reason alone. The cache clears itself past `SPRITE_CACHE_MAX` and warns, so the
+  next one degrades to a slow frame instead of a dead lane, but the cap is a
+  backstop and not the fix. `test/render-loop.test.js` draws for a simulated hour
+  and asserts the count never moves after the warm-up.
+
+- **A pet only sleeps when the rollup is exactly `idle`.** That made the bug
+  above invisible for months: the stale-session bug kept something in `waiting`
+  almost permanently, so `idle` was nearly unreachable and no pet ever slept.
+  Fixing session liveness is what exposed it. Expect latent render bugs when
+  changing which states the watcher emits.
+
 - **Verify tests by mutation, not by a green run.** An audit of this suite found
   34 surviving mutants, several of them tests that could not fail at all. Break
   the code a new test covers and confirm it goes red.
