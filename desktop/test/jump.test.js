@@ -89,6 +89,63 @@ test('a destination pinned in config wins over the index', () => {
   assert.deepEqual(resolve({ config: { jumpApp: 'iTerm2' } }), { kind: 'activate', app: 'iTerm2' });
 });
 
+// ------------------------------------------------------- keeping the layout
+/*
+ * The deep link navigates: it replaces whatever the window is showing with the
+ * one conversation, collapsing a multi-pane layout into a single session. That
+ * is right when the session is somewhere else and destructive when it was
+ * already in front of you. `lastFocusedAt` is the only thing in a record that
+ * speaks to it — which panes are open is not readable at all.
+ */
+const focused = (over = {}, msAgo = 30 * 1000) => {
+  const index = indexFromFixture();
+  const record = index[UNDERIVABLE.cli];
+  index[UNDERIVABLE.cli] = { ...record, lastFocusedAt: Date.now() - msAgo, ...over };
+  return index;
+};
+
+test('a session focused moments ago is brought forward, not navigated to', () => {
+  const action = resolve({ desktopIndex: focused() });
+  assert.equal(action.kind, 'activate', 'navigating would collapse the panes it is sitting in');
+  assert.equal(action.app, 'Claude');
+});
+
+test('a session nobody has looked at in a while is navigated to', () => {
+  const action = resolve({ desktopIndex: focused({}, 60 * 60 * 1000) });
+  assert.equal(action.kind, 'open-url', 'it is not on screen, so there is a layout to change');
+  assert.ok(action.url.endsWith(UNDERIVABLE.desktop));
+});
+
+test('an archived conversation is navigated to however recently it was focused', () => {
+  const action = resolve({ desktopIndex: focused({ isArchived: true }) });
+  assert.equal(action.kind, 'open-url', 'an archived conversation cannot be the one on screen');
+});
+
+test('a record with no focus timestamp is navigated to, as it always was', () => {
+  // every record written before the app tracked focus, and the fixture's own
+  assert.equal(resolve().kind, 'open-url');
+  assert.equal(resolve({ desktopIndex: focused({ lastFocusedAt: 0 }) }).kind, 'open-url');
+});
+
+test('jumpMode never navigates, and always navigates', () => {
+  // for people who live in a multi-pane layout, and for anyone who wants the
+  // behaviour from before the layout was worth protecting
+  const stale = focused({}, 60 * 60 * 1000);
+  assert.equal(resolve({ desktopIndex: stale, config: { jumpMode: 'never' } }).kind, 'activate',
+    'never must hold the layout even for a session that is certainly not on screen');
+
+  assert.equal(resolve({ desktopIndex: focused(), config: { jumpMode: 'always' } }).kind, 'open-url',
+    'always must navigate even to the session already in front of you');
+});
+
+test('the layout window is measured against an injected clock, not the wall', () => {
+  // otherwise this whole behaviour is untestable without waiting ten minutes
+  const at = 1_700_000_000_000;
+  const index = focused({ lastFocusedAt: at });
+  assert.equal(resolve({ desktopIndex: index, now: at + 1000 }).kind, 'activate');
+  assert.equal(resolve({ desktopIndex: index, now: at + 60 * 60 * 1000 }).kind, 'open-url');
+});
+
 test('a platform with no way to reach the destination resolves to nothing to do', () => {
   for (const platform of ['win32', 'linux']) {
     const action = resolve({ platform, config: { jumpApp: 'iTerm2' } });
