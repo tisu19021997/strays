@@ -83,6 +83,7 @@ const bridge = {
   onClaudeStatus(cb) { bridge.handlers.status = cb; },
   onParty(cb) { bridge.handlers.party = cb; },
   onUsage(cb) { bridge.handlers.usage = cb; },
+  onShowTitles(cb) { bridge.handlers.showTitles = cb; },
   onCelebrate(cb) { bridge.handlers.celebrate = cb; },
   onCustomPets(cb) { bridge.handlers.customPets = cb; },
   onApprovalRequest(cb) { bridge.handlers.request = cb; },
@@ -91,7 +92,21 @@ const bridge = {
   jumpToSession(s) { bridge.jumps.push(s); },
   setInteractive(on) { bridge.interactive.push(on); },
 };
-globalThis.window.petsBridge = bridge;
+/*
+ * Listeners this file does not drive still have to exist, or the renderer throws
+ * on the line that registers one and abandons the rest of the file. Naming them
+ * all by hand made this stub a second list to maintain, and it fell behind the
+ * renderer three times. Unknown `onX` handlers are accepted and dropped; that
+ * the preload really exposes what the renderer subscribes to is asserted
+ * directly in renderer-scripts.test.js.
+ */
+globalThis.window.petsBridge = new Proxy(bridge, {
+  get: (target, key) => (
+    key in target ? target[key]
+      : typeof key === 'string' && /^on[A-Z]/.test(key) ? () => {}
+        : undefined
+  ),
+});
 
 globalThis.Strays = require('../../strays.js');
 // the renderer has no module system: overlay.html loads requests.js as a plain

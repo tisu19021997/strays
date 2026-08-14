@@ -16,15 +16,19 @@ const assert = require('node:assert');
 const LANE_W = 800;
 
 const drawnText = []; // every string the engine paints, so labels are readable
+const drawnFills = []; // and every colour it fills with, so chrome is checkable
 
 function fakeContext() {
   const ctx = {
     measureText: (t) => ({ width: String(t).length * 6 }),
     createRadialGradient: () => ({ addColorStop() {} }),
     fillText: (t) => drawnText.push(String(t)),
+    // the lane's surfaces are plain rectangles, so the fill style at the moment
+    // of the call is the only record of what colour anything came out
+    fillRect: () => drawnFills.push(String(ctx.fillStyle)),
   };
   for (const m of ['arcTo', 'beginPath', 'clearRect', 'closePath', 'drawImage',
-                   'ellipse', 'fill', 'fillRect', 'lineTo', 'moveTo',
+                   'ellipse', 'fill', 'lineTo', 'moveTo',
                    'restore', 'rotate', 'save', 'scale', 'setTransform', 'translate']) {
     ctx[m] = () => {};
   }
@@ -65,6 +69,15 @@ const fire = (type, ev) => (listeners.get(type) || []).slice().forEach((fn) => f
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = () => {};
+
+/*
+ * Whether anyone is watching is judged against performance.now(), so a test that
+ * wants to be unwatched has to be able to let real time pass without waiting for
+ * it. Starts at zero, which is "the pointer moved just now".
+ */
+let clock = 0;
+globalThis.performance = { now: () => clock };
+const waitLongEnoughToBeAlone = () => { clock += 60 * 1000; };
 
 const Strays = require('../../strays.js');
 
@@ -214,29 +227,333 @@ test('the fish answers a click like the rest of the team', (t) => {
   assert.deepEqual(clicked, ['a']);
 });
 
-test('hovering a bound pet reveals which session it holds', (t) => {
+test('hovering a bound pet says where it is running and what it is doing', (t) => {
+  // The hover line must not restate the plate above it. The name is already
+  // there; what the name cannot tell you is which checkout it is in and whether
+  // it is waiting on you.
   const world = mountFollowing(t);
   const sid = '7f3a9c21-0b44-4d6e-9a10-2c5e8b7d1f00';
 
-  Strays.setSessions([session(sid)]);
+  Strays.setSessions([{ ...session(sid, 'waiting'), title: 'Fix the watcher' }]);
   frame();
   const pet = petFor(world, sid);
 
-  const label = hoverPet(world, pet).find((s) => s.includes(pet.name));
-  assert.ok(label, 'the hovered pet gets a label');
-  assert.ok(label.includes(sid.slice(0, 8)),
-    `label "${label}" should name the session it holds`);
+  const drawn = hoverPet(world, pet);
+  const detail = drawn.find((s) => s.includes('demo'));
+  assert.ok(detail, `no detail line among ${JSON.stringify(drawn)}`);
+  assert.match(detail, /needs you/, 'the state is said in words, not the watcher\'s term');
+  assert.ok(drawn.some((s) => s.includes('Fix the watcher')),
+    'and the name stays on the plate above it');
+});
 
-  // the fish is bindable too, and still reports the usage it is there to report
-  const other = '0c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff';
-  Strays.setSessions([session(sid), session('b'), session('c'), session(other)]);
+test('an untitled session falls back to its id, and a titled one does not need to', (t) => {
+  /*
+   * Two sessions open in the same repo are the case this protects: the plate
+   * can only show the project for an untitled one, so without the id a click
+   * cannot be aimed. A titled session is already distinguishable, and spending
+   * the line on a uuid nobody recognises would be a waste of it.
+   */
+  const world = mountFollowing(t);
+  const bare = '7f3a9c21-0b44-4d6e-9a10-2c5e8b7d1f00';
+  Strays.setSessions([session(bare)]);
   frame();
-  const fish = petFor(world, other);
+  assert.ok(
+    hoverPet(world, petFor(world, bare)).some((s) => s.includes(bare.slice(0, 8))),
+    'an untitled session has nothing else to tell two of them apart',
+  );
+
+  const titled = '0c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff';
+  Strays.setSessions([{ ...session(titled), title: 'Named session' }]);
+  frame();
+  assert.ok(
+    !hoverPet(world, petFor(world, titled)).some((s) => s.includes(titled.slice(0, 8))),
+    'a titled session must not spend the line on a uuid',
+  );
+});
+
+test('hovering a pet with no session says so, and unhovered ones stay bare', (t) => {
+  // A wandering pet carries no label — that is the quiet default. But pointing
+  // at one has to explain itself: no name is *because* there is no session.
+  const world = mountFollowing(t);
+  Strays.setSessions([]);
+  frame();
+  const pet = world.pets.find((p) => p.kind === 'segfault');
+
+  drawnText.length = 0;
+  frame();
+  assert.ok(!drawnText.some((s) => s.includes(pet.name)),
+    'an unhovered pet with no session must not be labelled at all');
+
+  const drawn = hoverPet(world, pet);
+  assert.ok(drawn.some((s) => s.includes(pet.name)), 'hovering names the pet');
+  assert.ok(drawn.some((s) => s.includes('no session')),
+    `hovering should explain the absence, got ${JSON.stringify(drawn)}`);
+});
+
+test('a pet speaks in its own colour, never in white', (t) => {
+  /*
+   * The bubble used to be white. That failed twice: it was the loudest surface
+   * in the lane for the least important thing in it, and over a light window
+   * there was no bubble visible at all. Taking the fill from the speaker's own
+   * palette makes it legible on any backdrop and says who is talking.
+   */
+  const world = mountFollowing(t);
+  Strays.setSessions([session('alpha'), session('beta')]);
+  frame();
+
+  const grep = world.pets.find((p) => p.kind === 'grep');
+  world.bubbles.push({ pet: grep, text: 'found it', age: 0.5, life: 99 });
+
+  drawnFills.length = 0;
+  frame();
+  const own = grep.pal[1];
+  assert.ok(drawnFills.includes(own),
+    `the bubble should be filled with the pet's own ${own}`);
+  for (const fill of drawnFills) {
+    assert.ok(!/^#(fff|ffffff|fafafc)$/i.test(fill),
+      `nothing in the lane should be painted white, found ${fill}`);
+  }
+});
+
+test('the fish still reports the usage it exists to report', (t) => {
+  const world = mountFollowing(t);
+  const ids = ['a', 'b', 'c', 'd'];
+  Strays.setSessions(ids.map((i) => session(i)));
+  frame();
+  const fish = petFor(world, 'd');
   assert.equal(fish.kind, 'heisenbug');
-  const fishLabel = hoverPet(world, fish).find((s) => s.includes(fish.name));
-  assert.ok(fishLabel.includes(other.slice(0, 8)),
-    `label "${fishLabel}" should name the session it holds`);
-  assert.match(fishLabel, /anomalies/);
+
+  Strays.setUsage({ input: 1000, output: 2000, cacheRead: 0, cacheWrite: 0, cost: 12.5 });
+  const drawn = hoverPet(world, fish);
+  const line = drawn.find((s) => s.includes('$'));
+  assert.ok(line, `no usage line among ${JSON.stringify(drawn)}`);
+  assert.match(line, /12\.50/);
+  assert.match(line, /tok/);
+});
+
+// --------------------------------------------------------------- Heisenbug
+/* how far the fish moves over a stretch of frames, with nobody touching it */
+function fishDrift(world, seconds = 60) {
+  const fish = world.pets.find((p) => p.kind === 'heisenbug');
+  let last = fish.x;
+  let jumps = 0;
+  for (let i = 0; i < seconds * 60; i++) {
+    clock += 1000 / 60;
+    Strays.step(1 / 60);
+    if (Math.abs(fish.x - last) > 60) jumps++;
+    last = fish.x;
+  }
+  return jumps;
+}
+
+/* the fish is the last pet bound, so it takes four sessions to put her on one */
+const fourSessions = () => ['a', 'b', 'c', 'd'].map((id) => session(id, 'resting'));
+
+test('the fish teleports when she is genuinely alone', (t) => {
+  // the character, stated: she only misbehaves when nobody is looking. If this
+  // ever goes quiet, the joke has been deleted rather than fixed.
+  const world = mountFollowing(t);
+  Strays.setSessions(fourSessions());
+  frame();
+  waitLongEnoughToBeAlone();
+  assert.ok(fishDrift(world) > 0, 'unwatched, she should get up to something');
+});
+
+test('a host that knows someone is there stops her wandering off', (t) => {
+  /*
+   * The bug this exists for. The engine infers "someone is watching" from a
+   * mousemove over its own canvas, which on a web page is fair. The desktop
+   * overlay is a 190px strip along the bottom of the screen that nobody ever
+   * points at, so a developer sitting there working all day never counted, and
+   * the fish teleported across the screen for the entire session — about
+   * thirty times a minute. The overlay now answers the question itself, from
+   * system-wide idle time.
+   */
+  const world = mountFollowing(t);
+  Strays.setSessions(fourSessions());
+  frame();
+  Strays.setObserved(true);
+  waitLongEnoughToBeAlone();
+
+  assert.equal(fishDrift(world), 0,
+    'told that someone is present, she must stay put however old the last mousemove is');
+});
+
+test('and the mischief can be switched off outright', (t) => {
+  const world = mountFollowing(t);
+  Strays.setSessions(fourSessions());
+  frame();
+  Strays.setMischief(false);
+  waitLongEnoughToBeAlone();
+
+  assert.equal(fishDrift(world), 0, 'off means off, watched or not');
+});
+
+test('handing observation back to the pointer restores the guess, both ways', (t) => {
+  /*
+   * The plain-web-page case: no host to ask, so the mousemove heuristic is all
+   * there is. `null` has to mean "work it out again" — not "nobody is there",
+   * which would leave a page that had once called setObserved permanently
+   * convinced it was alone.
+   */
+  const world = mountFollowing(t);
+  Strays.setSessions(fourSessions());
+  frame();
+  Strays.setObserved(true);
+  Strays.setObserved(null);
+
+  // the pointer just moved, so the heuristic should say someone is watching.
+  // Asserted on the decision itself rather than on whether she happens to
+  // teleport: the teleport is on a timer of several seconds, and the heuristic
+  // only holds for six, so drift cannot tell these apart in the time available.
+  fire('mousemove', { clientX: 10, clientY: world.h - 5 });
+  Strays.step(1 / 60);
+  assert.equal(world.observed, true,
+    'with the pointer live, handing back control must not read as being alone');
+
+  // and once it has been still for long enough, the same heuristic says alone
+  waitLongEnoughToBeAlone();
+  Strays.step(1 / 60);
+  assert.equal(world.observed, false, 'the guess still notices when nobody is there');
+  assert.ok(fishDrift(world) > 0, 'and she gets up to something again');
+});
+
+// ------------------------------------------------------------- sprite sets
+/*
+ * Every state the pets can be drawn in, taken from drawPet's own switch. A pet
+ * whose sprite set has a hole in it selects `undefined`, and reading .length off
+ * it throws out of the render loop — which on a canvas means every pet silently
+ * disappears, with nothing on screen to say why.
+ *
+ * This shipped: DOG defines neither `sit` nor `sleep`, and `sleep` fell back only
+ * as far as `sit`, so Grep falling asleep blanked the entire overlay. It stayed
+ * hidden because the world only reaches `idle` — the state that lets a pet fall
+ * asleep — when no session is active or waiting, and a stale-session bug used to
+ * keep something in `waiting` almost permanently.
+ */
+const DRAWN_STATES = ['walk', 'fetch', 'sit', 'deadlock', 'sleep', 'loaf',
+  'sniff', 'dig', 'glitch', 'crashed', 'swim'];
+
+/* the grids drawPet selects out of a pet's own sprite set */
+const REQUIRED_GRIDS = ['walk1', 'walk2', 'sit', 'sleep'];
+
+const MINIMAL_PET = {
+  name: 'Nullptr',
+  palette: { 1: '#8fd977', k: '#17181c' },
+  grids: { walk1: ['.11.', '1111', '.1.1'] }, // walk1 only, as the docs allow
+};
+
+test('every pet resolves every grid the drawing code can select', (t) => {
+  const world = mountFollowing(t);
+  Strays.addCustomPet(MINIMAL_PET, false);
+  frame();
+
+  for (const pet of world.pets) {
+    for (const grid of REQUIRED_GRIDS) {
+      const g = pet.sprites[grid];
+      assert.ok(Array.isArray(g) && g.length,
+        `${pet.name} has no ${grid} grid — drawing it would throw and blank the lane`);
+      assert.ok(g.every((row) => row.length === g[0].length),
+        `${pet.name}'s ${grid} has rows of differing length`);
+    }
+  }
+});
+
+test('every pet can be drawn in every state without throwing', (t) => {
+  const world = mountFollowing(t);
+  Strays.addCustomPet(MINIMAL_PET, false);
+  Strays.setSessions([]);       // nobody hidden, so the whole team is drawn
+  frame();
+
+  for (const state of DRAWN_STATES) {
+    for (const pet of world.pets) {
+      pet.state = state;
+      pet.stateT = 999;         // don't let the step transition out before drawing
+      pet.frame = 1;            // the second walk frame is a separate grid
+    }
+    assert.doesNotThrow(() => frame(), `drawing every pet in "${state}" threw`);
+    for (const pet of world.pets) { pet.frame = 0; }
+    assert.doesNotThrow(() => frame(), `drawing every pet in "${state}" threw on frame 0`);
+  }
+});
+
+// ------------------------------------------------------ naming the session
+/* the strings drawn in one frame with nothing hovered */
+function paint() {
+  drawnText.length = 0;
+  frame();
+  return drawnText.slice();
+}
+
+test('a pet carries the name of the session it holds, without being hovered', (t) => {
+  // eight pets in one lane, and the point is to know which is which at a glance
+  const world = mountFollowing(t);
+  Strays.setSessions([{ ...session('alpha'), title: 'Fix the watcher' }]);
+  frame();
+
+  assert.ok(paint().some((s) => s.includes('Fix the watcher')),
+    'the session name belongs on the pet, not behind a hover');
+  assert.ok(petFor(world, 'alpha'), 'and the pet is still bound');
+});
+
+test('a session with no name falls back to the project it is running in', (t) => {
+  // a transcript always records a cwd and only sometimes records a title
+  mountFollowing(t);
+  Strays.setSessions([session('alpha')]); // cwd /Users/dev/Projects/demo
+  frame();
+  assert.ok(paint().some((s) => s.includes('demo')),
+    'the last segment of the working directory is the fallback');
+});
+
+test('a Windows working directory names the project, not the whole path', (t) => {
+  // A Windows cwd contains no forward slashes, so "the last segment" used to be
+  // the entire string — the caption read `C:\Users\me\Proje…` instead of `demo`
+  mountFollowing(t);
+  Strays.setSessions([{ id: 'w', state: 'tool', cwd: 'C:\\Users\\quang\\Projects\\demo' }]);
+  frame();
+
+  const drawn = paint();
+  assert.ok(drawn.some((s) => s === 'demo'),
+    `expected the project name, got ${JSON.stringify(drawn)}`);
+  assert.ok(!drawn.some((s) => s.includes('C:')), 'and not the drive it is on');
+});
+
+test('a long name is cut down rather than covering the pets either side', (t) => {
+  mountFollowing(t);
+  const long = 'Investigate the flaky approval gate timeout on Windows';
+  Strays.setSessions([{ ...session('alpha'), title: long }]);
+  frame();
+
+  const drawn = paint().find((s) => s.startsWith('Investigate'));
+  assert.ok(drawn, 'the name is still drawn');
+  assert.ok(drawn.length < long.length, `"${drawn}" was not shortened`);
+  assert.ok(drawn.endsWith('…'), 'and it says that it was cut');
+});
+
+test('names can be turned off, leaving the state badge alone', (t) => {
+  mountFollowing(t);
+  Strays.setSessions([{ ...session('alpha', 'waiting'), title: 'Fix the watcher' }]);
+  frame();
+
+  Strays.setShowTitles(false);
+  const off = paint();
+  assert.ok(!off.some((s) => s.includes('Fix the watcher')), 'the name is gone');
+  assert.ok(off.includes('❗'), 'the state glyph is not');
+
+  Strays.setShowTitles(true);
+  assert.ok(paint().some((s) => s.includes('Fix the watcher')), 'and it comes back');
+});
+
+test('a session carrying neither name nor cwd draws a badge and no name', (t) => {
+  // the engine is a <script> tag on any page too, where setSessions may pass
+  // nothing but an id and a state
+  mountFollowing(t);
+  Strays.setSessions([{ id: 'bare', state: 'tool' }]);
+  frame();
+  const drawn = paint();
+  assert.ok(drawn.includes('🔧'), 'the state badge still draws');
+  assert.ok(!drawn.some((s) => s.includes('undefined') || s.includes('null')),
+    'and nothing leaks a missing field into the lane');
 });
 
 test('an approval card anchors to the pet bound to the requesting session', (t) => {
