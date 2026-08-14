@@ -27,4 +27,37 @@ function payload(over = {}) {
 /* an empty ruleset, so mode behaviour can be tested without rule interference */
 const noRules = () => ({ allow: [], deny: [], ask: [] });
 
-module.exports = { fixture, readFixture, jsonFixture, payload, noRules, FIXTURES };
+/*
+ * Shift a transcript's timestamps so its newest entry is `msAgo` old, keeping
+ * the gaps between entries intact.
+ *
+ * How old the watcher thinks a session is comes from the timestamps inside the
+ * transcript, not from the file's mtime — Claude Code rewrites a transcript to
+ * record a title or the last prompt long after the conversation ended, so mtime
+ * says a dead session is live. Ageing content is therefore what a test means by
+ * ageing a session; touching mtime tests only the no-timestamps fallback.
+ */
+function ageTranscript(body, msAgo) {
+  const lines = body.trim().split('\n');
+  const stamps = [];
+  for (const line of lines) {
+    try {
+      const t = Date.parse(JSON.parse(line).timestamp);
+      if (!Number.isNaN(t)) stamps.push(t);
+    } catch { /* bookkeeping lines carry no timestamp, by design */ }
+  }
+  if (!stamps.length) return body;
+  const shift = (Date.now() - msAgo) - Math.max(...stamps);
+  return lines.map((line) => {
+    let j;
+    try { j = JSON.parse(line); } catch { return line; }
+    const t = Date.parse(j.timestamp);
+    if (Number.isNaN(t)) return line;
+    j.timestamp = new Date(t + shift).toISOString();
+    return JSON.stringify(j);
+  }).join('\n') + '\n';
+}
+
+module.exports = {
+  fixture, readFixture, jsonFixture, payload, noRules, ageTranscript, FIXTURES,
+};
