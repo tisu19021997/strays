@@ -14,7 +14,8 @@
  *
  *   Strays.mount({ party: true })
  *   Strays.setStatus('working' | 'needs-you' | 'idle' | null)
- *   Strays.setSessions([{ id, state: 'thinking'|'tool'|'waiting'|'done', cwd }])
+ *   Strays.setSessions([{ id, state: 'thinking'|'tool'|'waiting'|'done', cwd, title }])
+ *   Strays.setShowTitles(false)  // pets carry state only, not a session name
  *   Strays.addCustomPet(def)     // see editor.html for the format
  *
  * MIT licensed. Draw your own pet in editor.html.
@@ -195,6 +196,16 @@
     heisenbug:{ 1: '#ffb26b', 2: '#ff8f4d', 3: '#d96a30', k: '#17181c', w: '#f5f7fb' },
   };
 
+  /*
+   * The red and blue ghosts of Segfault's pre-crash glitch. Module-level, and
+   * that is load-bearing rather than tidy: the sprite cache is keyed by a
+   * lazily-assigned id per palette object, so writing these inline at the call
+   * site minted a new key — and a new offscreen canvas, kept forever — on every
+   * frame of every crash. See spriteBitmap.
+   */
+  const GLITCH_RED = { 1: '#ff5f56', 2: '#ff5f56', 3: '#c33', s: '#ff5f56', k: '#600', w: '#fff', p: '#f99' };
+  const GLITCH_BLUE = { 1: '#57c7ff', 2: '#57c7ff', 3: '#38a', s: '#57c7ff', k: '#036', w: '#fff', p: '#9cf' };
+
   // -------------------------------------------------------------- utilities
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = (arr) => arr[(Math.random() * arr.length) | 0];
@@ -240,7 +251,39 @@
     return String(n);
   }
 
-  const STATE_GLYPHS = { thinking: '💭', tool: '🔧', waiting: '❗', done: '✓' };
+  // `resting` is a session you still have open that is not asking for
+  // anything — it keeps its pet and its name, but does not hop or nag.
+  const STATE_GLYPHS = { thinking: '💭', tool: '🔧', waiting: '❗', resting: '💤', done: '✓' };
+
+  /*
+   * How much of a session's name a pet carries. Eight pets share one lane a few
+   * hundred pixels tall and the whole screen wide, so a name that runs long
+   * stops being a glance and starts covering its neighbours.
+   */
+  const TITLE_CHARS = 18;
+
+  // ------------------------------------------------------------ lane chrome
+  /*
+   * The labels above the pets are built out of the same material as the pets:
+   * flat opaque fills, a 1px dark edge, corners knocked out by one pixel. The
+   * one colour that is not fixed is the speech bubble, which takes the speaking
+   * pet's own light tone — so who said it is a colour rather than a deduction.
+   */
+  const FONT = '11px ui-monospace, Menlo, monospace';
+  const EDGE = '#0b0c10';      // the generated sprite outline, near enough
+  const PLATE = '#14161c';     // nameplate fill
+  const INK = '#e8ebf2';
+  const INK_DIM = '#99a1b4';   // the hover detail line
+  const WAIT_INK = '#ffb03a';  // a session that needs you
+  const DONE_INK = '#7ddb63';
+
+  const PLATE_H = 18;          // one line of chrome
+  const LINE_H = 14;           // the hover line added beneath it
+  const PLATE_PAD = 6;
+  const GLYPH_BOX = 20;        // the square the state glyph sits in
+  const PLATE_GAP = 5;         // between the pet's head and its nameplate
+  const SPEECH_GAP = 3;        // between the nameplate and the speech above it
+  const TAIL_H = 4;            // the pixel staircase under a speech bubble
 
   // ---------------------------------------------------- sprite cache/outline
   // Sprites render once to an offscreen canvas: fills first, then a 1px dark
@@ -277,12 +320,32 @@
     return cv;
   }
 
+  /*
+   * The cache is keyed by identity, not by content, so a caller that builds its
+   * palette or grid inline gets a fresh key every single call. Four pets over a
+   * handful of states need a few dozen entries; anything past the cap is a bug
+   * of that shape, and dropping the cache bounds it at a slow frame instead of
+   * a renderer that grows until canvas allocation fails and the lane dies.
+   */
+  const SPRITE_CACHE_MAX = 256;
+  let cacheWarned = false;
+
   function spriteBitmap(grid, pal, scale) {
     if (!grid._k) Object.defineProperty(grid, '_k', { value: _idc++ });
     if (!pal._k) Object.defineProperty(pal, '_k', { value: _idc++ });
     const key = grid._k + ':' + pal._k + ':' + scale;
     let cv = spriteCache.get(key);
-    if (!cv) { cv = renderSpriteCanvas(grid, pal, scale); spriteCache.set(key, cv); }
+    if (!cv) {
+      if (spriteCache.size >= SPRITE_CACHE_MAX) {
+        spriteCache.clear();
+        if (!cacheWarned) {
+          cacheWarned = true;
+          console.warn('strays: sprite cache overflowed — a caller is passing a new grid or palette object each frame');
+        }
+      }
+      cv = renderSpriteCanvas(grid, pal, scale);
+      spriteCache.set(key, cv);
+    }
     return cv;
   }
 
@@ -316,9 +379,15 @@
       mouse: { x: -9999, y: -9999, active: false },
       observed: true,
       lastMouseMove: 0,
+      badFrames: 0,      // frames the draw loop threw out of; see tick()
       status: null,       // legacy global status
       sessions: [],       // per-session states from the desktop watcher
       followMode: false,  // Crew-style: one visible pet per session
+      showTitles: opts.showTitles !== false, // name the session a pet is carrying
+      // null = work it out from the mouse (a web page); a boolean = the host
+      // knows better, which the desktop overlay does
+      observedOverride: null,
+      mischief: opts.mischief !== false,     // Heisenbug wanders off when alone
       usage: null,        // today's token stats (Heisenbug is the usage tracker)
       costMilestone: null,
       anomalies: 0,
@@ -342,6 +411,26 @@
   }
 
   // ------------------------------------------------------------------- pets
+  /*
+   * A sprite set with the optional frames resolved.
+   *
+   * walk2, sit and sleep are documented as optional, falling back to walk1, and
+   * the drawing code is entitled to take that literally. DOG defines neither sit
+   * nor sleep, so Grep falling asleep selected `undefined` and threw out of the
+   * render loop — which on a canvas means every pet silently vanishes and
+   * nothing says why. Resolving the fallbacks once, here, is what makes the
+   * documented contract true for built-in pets as well as custom ones.
+   */
+  function spriteSet(grids) {
+    const walk1 = grids.walk1;
+    return Object.assign({}, grids, {
+      walk1,
+      walk2: grids.walk2 || walk1,
+      sit: grids.sit || walk1,
+      sleep: grids.sleep || grids.sit || walk1,
+    });
+  }
+
   function makePet(world, kind, x) {
     const base = {
       kind, x, dir: Math.random() < 0.5 ? 1 : -1,
@@ -352,14 +441,14 @@
       session: null,
     };
     if (kind === 'segfault') {
-      Object.assign(base, { name: 'Segfault', sprites: CAT, pal: PALETTES.segfault, speed: 24, crashT: rand(14, 30) });
+      Object.assign(base, { name: 'Segfault', sprites: spriteSet(CAT), pal: PALETTES.segfault, speed: 24, crashT: rand(14, 30) });
     } else if (kind === 'mutex') {
-      Object.assign(base, { name: 'Mutex', sprites: CAT, pal: PALETTES.mutex, speed: 16, lazy: true });
+      Object.assign(base, { name: 'Mutex', sprites: spriteSet(CAT), pal: PALETTES.mutex, speed: 16, lazy: true });
     } else if (kind === 'grep') {
-      Object.assign(base, { name: 'Grep', sprites: DOG, pal: PALETTES.grep, speed: 44, digT: rand(6, 14), carrying: null });
+      Object.assign(base, { name: 'Grep', sprites: spriteSet(DOG), pal: PALETTES.grep, speed: 44, digT: rand(6, 14), carrying: null });
     } else if (kind === 'heisenbug') {
       Object.assign(base, {
-        name: 'Heisenbug', sprites: { walk1: FISH.swim1, walk2: FISH.swim2 },
+        name: 'Heisenbug', sprites: spriteSet({ walk1: FISH.swim1, walk2: FISH.swim2 }),
         pal: PALETTES.heisenbug, state: 'swim', speed: 16,
         fy: 0, fdir: Math.random() < 0.5 ? 1 : -1, flipped: false, teleportT: rand(2, 5),
       });
@@ -369,7 +458,6 @@
 
   // custom pets drawn in editor.html (or imported from images)
   function makeCustomPet(world, def, x) {
-    const walk1 = def.grids.walk1;
     return {
       kind: 'custom', custom: true,
       name: def.name || 'Pet',
@@ -382,12 +470,7 @@
       pal: def.palette,
       phrases: def.phrases || [],
       session: null,
-      sprites: {
-        walk1,
-        walk2: def.grids.walk2 || walk1,
-        sit: def.grids.sit || walk1,
-        sleep: def.grids.sleep || def.grids.sit || walk1,
-      },
+      sprites: spriteSet(def.grids),
     };
   }
 
@@ -657,7 +740,7 @@
       spawnParticle(world, { x: pet.x + pw / 2, y: floorY(world) - 62, glyph: '💸', color: '#7ddb63', vy: -12, life: 1.2 });
     }
 
-    if (world.observed) {
+    if (world.observed || !world.mischief) {
       if (pet.flipped) {
         pet.flipped = false;
         say(world, pet, pick(HEISENBUG_ALIBIS), 2.4);
@@ -666,9 +749,9 @@
     } else {
       pet.flipped = true;
       pet.teleportT -= dt;
-      pet.x += pet.speed * 4 * pet.fdir * dt;
+      pet.x += pet.speed * 2 * pet.fdir * dt;
       if (pet.teleportT <= 0) {
-        pet.teleportT = rand(0.6, 2);
+        pet.teleportT = rand(8, 20);
         pet.x = rand(10, Math.max(30, world.w - pw - 10));
         pet.fdir *= -1;
         world.anomalies++;
@@ -716,18 +799,133 @@
     return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
   }
 
-  function drawSessionBadge(world, pet, x, y) {
+  /* the last segment of a working directory: the project a session is in */
+  function projectOf(cwd) {
+    // split on both separators: a Windows cwd contains no forward slashes
+  const parts = String(cwd || '').split(/[\\/]/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+
+  /*
+   * Which session a pet is carrying, in as few characters as will fit above it.
+   * The name Claude Code gave the conversation says the most; the project it is
+   * running in is the fallback, because a transcript always records a cwd and
+   * only sometimes records a title.
+   */
+  function sessionLabel(s) {
+    const raw = (s && s.title) || projectOf(s && s.cwd);
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    if (text.length <= TITLE_CHARS) return text;
+    // trimmed before the ellipsis, or a name cut at a word boundary reads as
+    // "Redesign the pet …" with a gap where the missing word was
+    return text.slice(0, TITLE_CHARS - 1).replace(/\s+$/, '') + '…';
+  }
+
+  /* what a session state is called out loud, rather than in the watcher's terms */
+  const STATE_WORDS = {
+    thinking: 'thinking', tool: 'working', waiting: 'needs you',
+    resting: 'resting', done: 'done',
+  };
+
+  /*
+   * A surface built the way the sprites are: one flat opaque fill, a 1px dark
+   * outline, and corners knocked out by a single pixel. No radii and no
+   * translucency — the lane floats over whatever window you happen to have open,
+   * and a see-through label is only legible over half of them.
+   */
+  function pixelPlate(ctx, x, y, w, h, fill, edge) {
+    x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
+    ctx.fillStyle = edge;
+    ctx.fillRect(x + 1, y, w - 2, h);
+    ctx.fillRect(x, y + 1, w, h - 2);
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 2, y + 1, w - 4, h - 2);
+    ctx.fillRect(x + 1, y + 2, w - 2, h - 4);
+  }
+
+  /*
+   * Where a pet's nameplate sits and what it says.
+   *
+   * Hovering expands this plate in place instead of raising a second one: three
+   * separate boxes over one pet — name, quote, hover — is how the quote ended up
+   * drawn straight through the name.
+   */
+  function plateFor(world, pet, cx, topY) {
     const s = pet.session;
-    if (!s || !STATE_GLYPHS[s.state]) return;
+    const hovered = world.hoverPet === pet;
+    const bound = s && STATE_GLYPHS[s.state];
+    // An unbound pet is just wandering and carries no label — until you point at
+    // it, when it should still be able to say who it is and that it has no
+    // session, which is the whole reason it has no name.
+    if (!bound && !hovered) return null;
+
     const ctx = world.ctx;
-    ctx.font = '11px ui-monospace, Menlo, monospace';
-    const glyph = STATE_GLYPHS[s.state];
-    ctx.fillStyle = 'rgba(18,20,28,0.9)';
-    roundRect(ctx, x - 11, y - 24, 22, 18, 6);
-    ctx.fill();
-    ctx.textAlign = 'center';
-    ctx.fillStyle = s.state === 'waiting' ? '#ffb03a' : s.state === 'done' ? '#7ddb63' : '#e8ebf2';
-    ctx.fillText(glyph, x, y - 10);
+    const glyph = bound ? STATE_GLYPHS[s.state] : '';
+    const name = bound ? (world.showTitles ? sessionLabel(s) : '') : pet.name;
+    const detail = hovered ? hoverLine(world, pet) : '';
+
+    ctx.font = FONT;
+    const lead = glyph ? GLYPH_BOX : PLATE_PAD;
+    const nameW = name ? ctx.measureText(name).width + PLATE_PAD : 0;
+    const detailW = detail ? ctx.measureText(detail).width : 0;
+    const w = Math.max(lead + nameW, detailW + PLATE_PAD * 2, GLYPH_BOX + PLATE_PAD);
+    const h = detail ? PLATE_H + LINE_H : PLATE_H;
+    const x = clamp(cx - w / 2, 4, Math.max(4, world.w - w - 4));
+    return {
+      x, y: topY - PLATE_GAP - h, w, h,
+      glyph, name, detail, lead, state: bound ? s.state : null,
+    };
+  }
+
+  function drawNameplate(world, pet, box) {
+    const ctx = world.ctx;
+    pixelPlate(ctx, box.x, box.y, box.w, box.h, PLATE, EDGE);
+    ctx.font = FONT;
+    if (box.glyph) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = box.state === 'waiting' ? WAIT_INK
+        : box.state === 'done' ? DONE_INK : INK;
+      ctx.fillText(box.glyph, box.x + GLYPH_BOX / 2, box.y + 13);
+    }
+    if (box.name) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = INK;
+      ctx.fillText(box.name, box.x + box.lead, box.y + 13);
+    }
+    if (box.detail) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = INK_DIM;
+      ctx.fillText(box.detail, box.x + PLATE_PAD, box.y + 14 + LINE_H);
+    }
+  }
+
+  /*
+   * The second line, revealed on hover. It must not restate the first: the name
+   * is already up there, so this is what the name cannot tell you — where the
+   * session is running and what it is doing. The session id used to be here and
+   * is gone: it is not something anyone recognises or can act on.
+   */
+  function hoverLine(world, pet) {
+    if (pet.kind === 'heisenbug' && world.usage) {
+      const u = world.usage;
+      return fmtTokens(u.input + u.output + u.cacheRead + u.cacheWrite) +
+        ' tok · ~$' + u.cost.toFixed(2) + ' today';
+    }
+    const s = pet.session;
+    if (!s) return 'no session';
+    const parts = [];
+    const where = projectOf(s.cwd);
+    if (where) parts.push(where);
+    parts.push(STATE_WORDS[s.state] || s.state);
+    /*
+     * Two sessions open in the same repo look identical on a plate that can
+     * only show the project, so a click cannot be aimed. A titled session is
+     * already distinguishable by its title; an untitled one needs the id, which
+     * is the one place it earns its space.
+     */
+    if (!s.title && s.id) parts.push(String(s.id).slice(0, 8));
+    return parts.join(' · ');
   }
 
   function drawPet(world, pet) {
@@ -755,8 +953,8 @@
 
     if (pet.state === 'glitch') {
       ctx.globalAlpha = 0.5;
-      drawGrid(ctx, grid, { 1: '#ff5f56', 2: '#ff5f56', 3: '#c33', s: '#ff5f56', k: '#600', w: '#fff', p: '#f99' }, pet.x + rand(-3, 3), y, s, pet.dir === -1);
-      drawGrid(ctx, grid, { 1: '#57c7ff', 2: '#57c7ff', 3: '#38a', s: '#57c7ff', k: '#036', w: '#fff', p: '#9cf' }, pet.x + rand(-3, 3), y + rand(-2, 2), s, pet.dir === -1);
+      drawGrid(ctx, grid, GLITCH_RED, pet.x + rand(-3, 3), y, s, pet.dir === -1);
+      drawGrid(ctx, grid, GLITCH_BLUE, pet.x + rand(-3, 3), y + rand(-2, 2), s, pet.dir === -1);
       ctx.globalAlpha = 1;
       drawGrid(ctx, grid, pet.pal, pet.x, y, s, pet.dir === -1, true);
     } else {
@@ -768,9 +966,10 @@
       drawHat(ctx, hx, y + 0.5 * s, s * 0.9);
     }
     if (pet.state === 'deadlock' && Math.floor(world.time * 2) % 2 === 0) {
-      drawLabel(world, pet.x + w / 2, y - 12, '🔒');
+      drawLabel(world, pet.x + w / 2, y + h / 2 + 8, '🔒');
     }
-    drawSessionBadge(world, pet, pet.x + w / 2, y);
+    pet.spriteTop = y;
+    pet.plateAt = pet.x + w / 2;
   }
 
   function drawFish(world, pet) {
@@ -802,7 +1001,8 @@
     ctx.restore();
 
     if (pet.hat) drawHat(ctx, x + fw / 2 - 3 * 2.6, y - fh * 0.72, 2.6);
-    drawSessionBadge(world, pet, x + fw / 2, y - 8);
+    pet.spriteTop = y - 8;
+    pet.plateAt = x + fw / 2;
   }
 
   function drawBall(world) {
@@ -819,63 +1019,85 @@
 
   function drawLabel(world, cx, y, text) {
     const ctx = world.ctx;
-    ctx.font = '11px ui-monospace, Menlo, monospace';
-    const w = ctx.measureText(text).width + 14;
+    ctx.font = FONT;
+    const w = ctx.measureText(text).width + PLATE_PAD * 2;
     const x = clamp(cx - w / 2, 4, world.w - w - 4);
-    ctx.fillStyle = 'rgba(18,20,28,0.92)';
-    roundRect(ctx, x, y - 16, w, 20, 6);
-    ctx.fill();
-    ctx.fillStyle = '#e8ebf2';
+    pixelPlate(ctx, x, y - 16, w, PLATE_H, PLATE, EDGE);
+    ctx.fillStyle = INK;
     ctx.textAlign = 'left';
-    ctx.fillText(text, x + 7, y - 2);
+    ctx.fillText(text, x + PLATE_PAD, y - 3);
   }
 
+  /*
+   * A pet talking, in the pet's own light tone.
+   *
+   * It used to be white, which failed twice over: it was the loudest thing in
+   * the lane for the least important thing in it, and over a light window there
+   * was no bubble to see at all. Taking the fill from the speaker's palette
+   * makes it legible on any backdrop and says who is talking without a tail
+   * having to be traced.
+   *
+   * It sits above the nameplate rather than across it — chromeTop is where the
+   * pet's own chrome ended this frame.
+   */
   function drawBubble(world, b) {
     const ctx = world.ctx;
     const pet = b.pet;
-    const pw = petWidth(pet);
-    const cx = pet.x + pw / 2;
-    const alpha = b.age < 0.15 ? b.age / 0.15 : b.age > b.life - 0.3 ? Math.max(0, (b.life - b.age) / 0.3) : 1;
+    const cx = pet.x + petWidth(pet) / 2;
+    const alpha = b.age < 0.15 ? b.age / 0.15
+      : b.age > b.life - 0.3 ? Math.max(0, (b.life - b.age) / 0.3) : 1;
+
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = '11px ui-monospace, Menlo, monospace';
-    const tw = ctx.measureText(b.text).width;
-    const w = tw + 16, h = 22;
-    const x = clamp(cx - w / 2, 4, world.w - w - 4);
-    const y = floorY(world) - (pet.kind === 'heisenbug' ? 92 : 58) - 14;
-    ctx.fillStyle = 'rgba(250,250,252,0.96)';
-    roundRect(ctx, x, y, w, h, 7);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(clamp(cx - 4, x + 8, x + w - 16), y + h);
-    ctx.lineTo(clamp(cx + 4, x + 16, x + w - 8), y + h);
-    ctx.lineTo(clamp(cx, x + 12, x + w - 12), y + h + 6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#22252e';
+    ctx.font = FONT;
+    const w = ctx.measureText(b.text).width + PLATE_PAD * 2;
+    const h = PLATE_H;
+    const x = clamp(cx - w / 2, 4, Math.max(4, world.w - w - 4));
+    const top = (pet.chromeTop != null ? pet.chromeTop : floorY(world) - 58) - SPEECH_GAP - TAIL_H - h;
+    const fill = (pet.pal && pet.pal[1]) || '#e8ebf2';
+
+    pixelPlate(ctx, x, top, w, h, fill, EDGE);
+
+    // a pixel staircase for the tail, drawn in the same two colours
+    const tx = Math.round(clamp(cx, x + 8, x + w - 8));
+    for (let i = 0; i < TAIL_H; i++) {
+      const half = TAIL_H - i;
+      ctx.fillStyle = EDGE;
+      ctx.fillRect(tx - half - 1, top + h + i, (half + 1) * 2, 1);
+      ctx.fillStyle = fill;
+      ctx.fillRect(tx - half, top + h + i, half * 2, 1);
+    }
+
+    ctx.fillStyle = EDGE;
     ctx.textAlign = 'left';
-    ctx.fillText(b.text, x + 8, y + 15);
+    ctx.fillText(b.text, x + PLATE_PAD, top + 13);
     ctx.restore();
   }
 
-  function roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
 
   // ------------------------------------------------------------------ loop
+  /*
+   * One throw in here used to end the animation for good: the frame that threw
+   * never reached the requestAnimationFrame at the bottom, so the lane froze on
+   * whatever had been painted so far — half a pet, or a shadow with no cat above
+   * it — with nothing on screen to say why. It has happened three times now (a
+   * missing sprite fallback, a missing state, an exhausted sprite cache), so the
+   * re-arm is unconditional and a bad frame costs one frame. The console is the
+   * only place left to say so; it is rate-limited because a permanent fault
+   * would otherwise write sixty lines a second.
+   */
   function tick(world, now) {
     if (world.destroyed) return;
-    const dt = Math.min(0.05, (now - (world.lastNow || now)) / 1000);
-    world.lastNow = now;
-    stepWorld(world, dt, now);
-    draw(world);
-    world.raf = requestAnimationFrame((n) => tick(world, n));
+    try {
+      const dt = Math.min(0.05, (now - (world.lastNow || now)) / 1000);
+      world.lastNow = now;
+      stepWorld(world, dt, now);
+      draw(world);
+    } catch (err) {
+      if (world.badFrames++ % 300 === 0) console.error('strays: bad frame', err);
+    } finally {
+      if (!world.destroyed) world.raf = requestAnimationFrame((n) => tick(world, n));
+    }
   }
 
   // A pet holds its session for as long as that session id is still being
@@ -916,9 +1138,19 @@
   function stepWorld(world, dt, now) {
     world.time += dt;
 
-    // observation (Heisenbug): visible tab + mouse seen in the last 6s
+    /*
+     * Is anyone watching? Heisenbug only misbehaves when nobody is.
+     *
+     * On a web page "a mousemove landed on the canvas recently" is a fair proxy
+     * for that. In the desktop overlay it is exactly backwards: the canvas is a
+     * 190px strip along the bottom of the screen that you almost never point at,
+     * so a developer sitting there working all day never registers, and the fish
+     * spends the entire session teleporting across the screen. The overlay
+     * therefore supplies the answer itself, from system-wide idle time.
+     */
     const mouseRecent = now - world.lastMouseMove < 6000;
-    world.observed = !document.hidden && mouseRecent;
+    const watched = world.observedOverride != null ? world.observedOverride : mouseRecent;
+    world.observed = !document.hidden && watched;
 
     // sessions -> pets, land pets first, the fish only if we run out
     const assignable = world.pets.filter((p) => p.kind !== 'heisenbug')
@@ -960,6 +1192,10 @@
     const ctx = world.ctx;
     ctx.clearRect(0, 0, world.w, world.h);
 
+    // Resolved before anything is drawn, because a pet's own nameplate is what
+    // expands on hover — there is no second label raised afterwards.
+    world.hoverPet = hitTest(world, world.mouse.x, world.mouse.y);
+
     drawBall(world);
     for (const p of world.pets) {
       if (p.hidden) continue;
@@ -990,36 +1226,21 @@
       ctx.restore();
     }
 
-    for (const bb of world.bubbles) drawBubble(world, bb);
-
-    const hp = hitTest(world, world.mouse.x, world.mouse.y);
-    world.hoverPet = hp;
-    if (hp) {
-      const pw = petWidth(hp);
-      const cx = hp.x + pw / 2;
-      const status =
-        hp.kind === 'heisenbug'
-          ? (world.usage
-              ? fmtTokens(world.usage.input + world.usage.output + world.usage.cacheRead + world.usage.cacheWrite) +
-                ' tok · ~$' + world.usage.cost.toFixed(2) + ' today · anomalies: ' + world.anomalies
-              : (world.observed ? 'behaving (you are looking) · anomalies: ' + world.anomalies : 'anomalies: ' + world.anomalies))
-          : hp.session ? hp.session.state + (hp.session.cwd ? ' · ' + shortPath(hp.session.cwd) : '')
-          : hp.state;
-      // naming the session makes the target confirmable before the click, which
-      // a cwd cannot do for two sessions open in the same repo
-      const who = hp.session ? ' · ' + shortId(hp.session.id) : '';
-      drawLabel(world, cx, floorY(world) - 96, hp.name + ' · ' + status + who);
+    /*
+     * Chrome last, and in one pass. A drifting particle drawn over a session
+     * name is the same failure as the quote that used to cover it: the label
+     * has to be readable at a glance or it is not doing its job.
+     */
+    for (const p of world.pets) {
+      if (p.hidden) continue;
+      const box = plateFor(world, p, p.plateAt, p.spriteTop);
+      // where this pet's chrome ends, so anything it says can sit above it
+      p.chromeTop = box ? box.y : p.spriteTop;
+      if (box) drawNameplate(world, p, box);
     }
+    for (const bb of world.bubbles) drawBubble(world, bb);
   }
 
-  function shortId(id) {
-    return String(id).slice(0, 8);
-  }
-
-  function shortPath(p) {
-    const parts = String(p).split('/').filter(Boolean);
-    return parts.length ? parts[parts.length - 1] : p;
-  }
 
   function hitTest(world, mx, my) {
     if (my < world.h - 110) return null;
@@ -1154,8 +1375,20 @@
     mount,
     setStatus(s) { if (this._world) this._world.status = s; },
     // per-session states from the desktop watcher:
-    // [{ id, state: 'thinking'|'tool'|'waiting'|'done', cwd }]
+    // [{ id, state: 'thinking'|'tool'|'waiting'|'done', cwd, title? }]
     setSessions(list) { if (this._world) this._world.sessions = Array.isArray(list) ? list : []; },
+    // whether a pet names the session it is carrying, or just shows its state
+    setShowTitles(on) { if (this._world) this._world.showTitles = !!on; },
+    /*
+     * Tell the engine whether anyone is actually watching, when the host can
+     * answer that better than a mousemove on the canvas can. Pass null to go
+     * back to working it out from the pointer.
+     */
+    setObserved(on) {
+      if (this._world) this._world.observedOverride = on == null ? null : !!on;
+    },
+    // whether Heisenbug wanders off while nobody is looking
+    setMischief(on) { if (this._world) this._world.mischief = !!on; },
     // one visible pet per session (used by the desktop overlay); with zero
     // sessions the whole team stays out
     setFollowMode(on) { if (this._world) this._world.followMode = !!on; },

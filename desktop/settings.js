@@ -58,7 +58,13 @@ function anchorToSource(rule, source) {
   const { tool, arg } = parseRule(rule);
   if (!FILE_TOOLS.includes(tool) || !arg) return rule;
   if (!arg.startsWith('/') || arg.startsWith('//')) return rule;
-  return `${tool}(/${path.join(source, arg)})`;
+  /*
+   * path.posix, not path: on Windows path.join emits backslashes, and the
+   * matcher reads a rule as a forward-slash glob. An anchored rule spelled with
+   * backslashes can never match anything, which silently drops every path rule
+   * a settings file contributed.
+   */
+  return `${tool}(/${path.posix.join(source.replace(/\\/g, '/'), arg)})`;
 }
 
 /*

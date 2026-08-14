@@ -71,13 +71,14 @@ function browserGlobals() {
   globals.window.addEventListener = noop;
   globals.window.removeEventListener = noop;
 
-  // the preload's contextBridge surface: every renderer listener registers here
-  const on = () => noop;
-  globals.window.petsBridge = {
-    onClaudeStatus: on, onParty: on, onUsage: on, onCelebrate: on,
-    onCustomPets: on, onApprovalRequest: on, onApprovalRemove: on,
-    approvalReply: noop, jumpToSession: noop, setInteractive: noop,
-  };
+  /*
+   * The preload's contextBridge surface. Answering every name with a noop keeps
+   * this stub from being a second list to maintain — listing the methods by hand
+   * meant that adding one to the renderer failed here, in a test whose whole job
+   * is to catch a different bug entirely. Whether the preload really exposes
+   * what the renderer subscribes to is checked directly, further down.
+   */
+  globals.window.petsBridge = new Proxy({}, { get: () => () => noop });
   return globals;
 }
 
@@ -96,6 +97,32 @@ test('every script overlay.html loads can be loaded together', () => {
       );
     }
     loaded.push(src);
+  }
+});
+
+test('the preload exposes every bridge method the renderer subscribes to', () => {
+  /*
+   * The renderer reaches the main process only through the preload's
+   * contextBridge surface. A listener the renderer registers but the preload
+   * never exposes throws on the line that registers it, which — in a classic
+   * script — abandons the rest of the file. Adding a channel means touching two
+   * files, so the pairing is asserted rather than assumed.
+   */
+  const preload = fs.readFileSync(path.join(DESKTOP, 'preload.js'), 'utf8');
+  const exposed = new Set(
+    [...preload.matchAll(/^\s{2}([A-Za-z_$][\w$]*)\s*:/gm)].map((m) => m[1]),
+  );
+  assert.ok(exposed.size > 5, 'the preload surface should have been found');
+
+  const used = new Set(
+    pageScripts().flatMap(({ code }) =>
+      [...code.matchAll(/petsBridge\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])),
+  );
+  assert.ok(used.size > 0, 'the renderer should use the bridge');
+
+  for (const name of used) {
+    assert.ok(exposed.has(name),
+      `the renderer calls petsBridge.${name}, which preload.js does not expose`);
   }
 });
 

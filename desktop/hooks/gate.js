@@ -95,9 +95,23 @@ function hookTimeoutMs(configDir) {
 
 // where Claude Code keeps the settings whose rules the prediction needs
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-const MANAGED_SETTINGS = process.platform === 'darwin'
-  ? '/Library/Application Support/ClaudeCode/managed-settings.json'
-  : '/etc/claude-code/managed-settings.json';
+/*
+ * Managed (enterprise) settings, per platform. Getting this wrong is quiet and
+ * one-directional: the file simply fails to read, every managed deny and ask
+ * rule drops out of the merge, and calls an administrator forbade look ordinary.
+ */
+function managedSettingsPath() {
+  if (process.platform === 'darwin') {
+    return '/Library/Application Support/ClaudeCode/managed-settings.json';
+  }
+  if (process.platform === 'win32') {
+    const programData = process.env.ProgramData || 'C:\\ProgramData';
+    return path.join(programData, 'ClaudeCode', 'managed-settings.json');
+  }
+  return '/etc/claude-code/managed-settings.json';
+}
+
+const MANAGED_SETTINGS = managedSettingsPath();
 
 /* the scopes to merge for one tool call: the project is wherever it runs */
 const scopesFor = (req) => ({

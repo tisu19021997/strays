@@ -1,0 +1,48 @@
+{
+  "name": "strays",
+  "version": "1.0.0",
+  "description": "A tiny team of pixel pets that live at the bottom of your screen and react to Claude Code sessions.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "desktop-pet",
+    "overlay",
+    "pixel-art",
+    "electron"
+  ],
+  "homepage": "https://github.com/tisu19021997/strays#readme",
+  "bugs": "https://github.com/tisu19021997/strays/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tisu19021997/strays.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "strays": "bin/strays.js"
+  },
+  "//": "Electron is a real dependency, not a dev one: `npx strays` has to be able to install and run the app on its own.",
+  "dependencies": {
+    "electron": "^33.2.0"
+  },
+  "files": [
+    "bin/",
+    "desktop/",
+    "!desktop/test/",
+    "strays.js",
+    "editor.html",
+    "index.html",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/strays.js",
+    "stop": "node desktop/stop.js",
+    "restart": "node bin/strays.js restart",
+    "hooks": "node desktop/setup-hooks.js",
+    "unhook": "node desktop/setup-hooks.js --remove",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

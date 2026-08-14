@@ -103,6 +103,26 @@ const EPITAXY_URL = 'claude://claude.ai/epitaxy/';
  */
 const RESUME_URL = 'claude://resume?session=';
 
+/*
+ * How recently the desktop app must have focused a conversation for us to treat
+ * it as still on screen.
+ *
+ * The deep link below navigates: it replaces whatever the window is showing with
+ * the one conversation, which collapses a multi-pane layout down to a single
+ * session. That is the right thing when the session you clicked is somewhere
+ * else, and destructive when it was already in front of you.
+ *
+ * Which panes are currently open is not something we can read. The desktop app
+ * keeps it in `extraPanesByMode` inside its Chromium leveldb store, snappy
+ * compressed, in a private format with no compatibility promise — reading that
+ * to decide a click would break on a release we cannot see coming. What every
+ * session record does carry is `lastFocusedAt`, and in a multi-pane layout you
+ * are moving between the visible panes constantly, so all of them are freshly
+ * focused. A session focused within this window is therefore assumed to be on
+ * screen already, and gets the app brought forward instead of a navigation.
+ */
+const LAYOUT_WINDOW_MS = 10 * 60 * 1000;
+
 /* transcripts written by the desktop app record this entrypoint */
 const DESKTOP_ENTRYPOINT = 'claude-desktop';
 
@@ -159,13 +179,27 @@ function firstRunning(candidates, running) {
   return candidates.find((app) => names.has(app) || names.has(app.toLowerCase())) || null;
 }
 
+/*
+ * Is this conversation probably already visible in the window as it stands?
+ * An archived one certainly is not, whatever its focus timestamp says.
+ */
+function looksOnScreen(record, now) {
+  if (!record || record.isArchived) return false;
+  const at = record.lastFocusedAt;
+  return typeof at === 'number' && at > 0 && now - at < LAYOUT_WINDOW_MS;
+}
+
 /**
  * @param {object} args
  * @param {object} args.session       a watcher session { id, entrypoint, ... }
  * @param {object} args.desktopIndex  desktop records keyed by cliSessionId
+ * @param {object} [args.config]      ~/.strays/config.json; jumpApp, jumpMode
+ * @param {number} [args.now]         injected so the layout window is testable
  * @returns {{kind: string, url?: string, app?: string, reason?: string}}
  */
-function resolveJumpTarget({ session, desktopIndex, running, config, platform, host } = {}) {
+function resolveJumpTarget({
+  session, desktopIndex, running, config, platform, host, now = Date.now(),
+} = {}) {
   // both mechanisms — the claude:// deep link and application activation —
   // are macOS-only, so elsewhere the honest answer is that there is nowhere
   // to go rather than a destination that silently fails
@@ -178,6 +212,22 @@ function resolveJumpTarget({ session, desktopIndex, running, config, platform, h
 
   const record = session && desktopIndex && desktopIndex[session.id];
   if (record && typeof record.sessionId === 'string' && record.sessionId) {
+    /*
+     * "never" is for people who work in a multi-pane layout all day and would
+     * rather always land on the app as it is than ever have it rearranged;
+     * "always" is the behaviour from before the layout was worth protecting.
+     */
+    const mode = (config && config.jumpMode) || 'auto';
+    if (mode === 'never') {
+      return { kind: 'activate', app: 'Claude', reason: 'jumpMode never navigates' };
+    }
+    if (mode !== 'always' && looksOnScreen(record, now)) {
+      return {
+        kind: 'activate',
+        app: 'Claude',
+        reason: 'focused recently, so it is probably already on screen',
+      };
+    }
     return { kind: 'open-url', url: EPITAXY_URL + encodeURIComponent(record.sessionId) };
   }
   if (session && session.entrypoint === DESKTOP_ENTRYPOINT && session.id) {
@@ -195,4 +245,6 @@ function resolveJumpTarget({ session, desktopIndex, running, config, platform, h
   return { kind: 'activate', app: firstRunning(JUMP_APPS, running) || 'Terminal' };
 }
 
-module.exports = { resolveJumpTarget, loadDesktopIndex, readSessionHost };
+module.exports = {
+  resolveJumpTarget, loadDesktopIndex, readSessionHost, LAYOUT_WINDOW_MS,
+};

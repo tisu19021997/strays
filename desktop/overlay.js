@@ -18,6 +18,11 @@ window.petsBridge.onClaudeStatus((s) => {
   Strays.setSessions(s.sessions || []);
 });
 window.petsBridge.onParty((on) => Strays.setParty(on));
+window.petsBridge.onShowTitles((on) => Strays.setShowTitles(on));
+// the lane is a strip nobody points at, so the engine cannot tell from the
+// pointer whether anyone is there — the main process asks the system instead
+window.petsBridge.onObserved((on) => Strays.setObserved(on));
+window.petsBridge.onMischief((on) => Strays.setMischief(on));
 window.petsBridge.onUsage((stats) => Strays.setUsage(stats));
 window.petsBridge.onCelebrate(() => Strays.celebrate());
 window.petsBridge.onCustomPets((defs) => {
@@ -112,7 +117,8 @@ window.petsBridge.onApprovalRequest((req) => {
 
 /* the project a request came from: the last segment of its working directory */
 function projectName(cwd) {
-  const parts = String(cwd || '').split('/').filter(Boolean);
+  // split on both separators: a Windows cwd contains no forward slashes
+  const parts = String(cwd || '').split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : '';
 }
 
