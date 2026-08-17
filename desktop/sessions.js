@@ -29,10 +29,24 @@ function dirStamp(root) {
   const walk = (dir, depth) => {
     let st;
     try { st = fs.statSync(dir); } catch { return; }
-    parts.push(dir + ':' + st.mtimeMs);
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { /* mtime alone */ }
+    /*
+     * How many entries there are, as well as when the directory last changed.
+     *
+     * A directory's mtime is supposed to move when an entry is added, and on
+     * Windows it does not reliably do so straight away — so a record written
+     * moments after the last read stayed invisible behind a stale cache, and a
+     * click on that session fell back to `claude://resume`, which opens a
+     * duplicate conversation instead of the one already on screen. That is the
+     * exact failure this index exists to prevent.
+     *
+     * The count costs nothing: the listing is already being read to recurse. It
+     * deliberately does not notice a record rewritten in place, because that
+     * cannot add or drop an index entry.
+     */
+    parts.push(dir + ':' + st.mtimeMs + ':' + entries.length);
     if (!depth) return;
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) if (e.isDirectory()) walk(path.join(dir, e.name), depth - 1);
   };
   walk(root, 2);

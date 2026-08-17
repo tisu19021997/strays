@@ -375,3 +375,38 @@ test('the recorder refuses a session id that describes a path', async () => {
   assert.equal(fs.existsSync(path.join(home, 'sessions')), false,
     'a refused id must not even cause the directory to be created');
 });
+
+test('a record added while the directory mtime stands still is still noticed', () => {
+  /*
+   * The cache is keyed on the store's directory stamp, and a directory's mtime
+   * is supposed to move when an entry is added. Windows does not reliably do so
+   * straight away, so a session record written moments after the last read
+   * stayed behind a stale cache — and a click on that session fell back to the
+   * resume link, opening a duplicate conversation instead of the one already
+   * there, which is the whole reason this index is consulted first.
+   *
+   * The mtime is pinned back by hand here. That is the same condition, and it
+   * reproduces on every platform rather than only where it bit.
+   */
+  const [first, second] = jsonFixture('desktop-sessions.json');
+  const { root, dir } = sessionStore([first]);
+
+  /*
+   * Pinned to one fixed instant on both sides of the write, rather than read
+   * and restored: a stat gives sub-millisecond precision that utimes cannot put
+   * back, so "restoring" the old mtime quietly changes it and the cache is
+   * invalidated for the very reason the test means to rule out.
+   */
+  const standstill = new Date(1_700_000_000_000);
+  fs.utimesSync(dir, standstill, standstill);
+  assert.equal(Object.keys(loadDesktopIndex(root)).length, 1);
+  const pinned = fs.statSync(dir).mtimeMs;
+
+  fs.writeFileSync(path.join(dir, second.sessionId + '.json'), JSON.stringify(second));
+  fs.utimesSync(dir, standstill, standstill);
+  assert.equal(fs.statSync(dir).mtimeMs, pinned,
+    'the mtime really must be unchanged, or this test proves nothing');
+
+  assert.ok(loadDesktopIndex(root)[second.cliSessionId],
+    'a new record must appear even when the mtime says nothing happened');
+});
