@@ -1,0 +1,37 @@
+# The test suite, on every push and every pull request.
+#
+# There is no install step, and that is not an oversight: the engine and the
+# whole desktop app are dependency-free, and `node --test` runs the suite
+# against a bare checkout. Electron is a real dependency of the *package* so
+# that `npx claude-strays` can start the app, but nothing under test requires
+# it — installing here would download a hundred megabytes of Chromium to run
+# tests that never open a window.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is what gets exercised daily; the others are here because the
+        # permission rules, the settings loader and the path matching all carry
+        # platform branches that have never run on a real machine of that kind
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22, 24]
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # a directory argument does not work; bare `node --test` is the runner
+      - run: npm test

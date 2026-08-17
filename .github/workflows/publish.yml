@@ -1,0 +1,99 @@
+# Publish to npm.
+#
+# Two ways in, and both land here:
+#
+#   - a version tag pushed by hand:  npm version patch && git push --follow-tags
+#   - release.yml, which works the version out from the commits and calls this
+#     workflow directly
+#
+# It is called rather than left to the tag it pushes, because a tag pushed by a
+# workflow using GITHUB_TOKEN deliberately does not trigger another workflow.
+# Relying on the tag would mean releases that tag themselves and never publish,
+# silently — so the caller passes the tag in and this file checks it agrees with
+# package.json before anything reaches the registry.
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_call:
+    inputs:
+      ref:
+        description: the tag to publish; defaults to whatever triggered the run
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # provenance, and trusted publishing if it is set up
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # a called workflow otherwise checks out the commit that triggered the
+          # *caller*, which is the one before the version bump — it would test
+          # the new version and publish the old one
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          # 24 ships npm 11.x. Trusted publishing needs npm 11.5.1+, and this is
+          # the cheapest way to be past that floor.
+          node-version: 24
+
+      # no install: the suite is dependency-free. See ci.yml.
+      - name: Test
+        run: npm test
+
+      - name: The tag and the version must agree
+        env:
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          want="${TAG##*/}"; want="${want#v}"
+          have="$(node -p "require('./package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "tag says $want, package.json says $have"
+            exit 1
+          fi
+          echo "publishing $have"
+
+      - name: What would ship
+        run: npm pack --dry-run
+
+      # `files` in package.json is a whitelist, so anything left out of it is
+      # simply missing for everyone who installs from npm while working
+      # perfectly in the checkout it was tested in
+      - name: Everything the command needs is in the tarball
+        run: |
+          npm pack --json > /tmp/pack.json
+          for f in bin/strays.js strays.js desktop/main.js desktop/package.json; do
+            node -e '
+              const need = process.argv[1];
+              const files = require("/tmp/pack.json")[0].files.map((f) => f.path);
+              if (!files.includes(need)) {
+                console.error("missing from the tarball: " + need);
+                process.exit(1);
+              }
+              console.log("ok " + need);
+            ' "$f"
+          done
+
+      - name: Publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "authenticating with the NPM_TOKEN secret"
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          else
+            echo "no NPM_TOKEN secret — relying on trusted publishing (OIDC)."
+            echo "That needs a trusted publisher registered for this package on"
+            echo "npmjs.com naming this repo and .github/workflows/publish.yml."
+          fi
+          npm publish --provenance --access public

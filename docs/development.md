@@ -58,20 +58,65 @@ dependency rather than a dev one so that `npx` can start the app on its own.
 `desktop/package.json` carries no dependencies and exists only to tell Electron
 which file is `main`.
 
+### It releases itself
+
+Merging to `main` is the whole ritual. `release.yml` reads the commits since the
+last `v*` tag, works out the bump, tags it, and hands the tag to `publish.yml`:
+
+| commits since the last tag | what happens |
+| --- | --- |
+| `feat!:` anywhere, or `BREAKING CHANGE` in a body | major |
+| `feat:` | minor |
+| `fix:` or `perf:` | patch |
+| only `docs:`, `chore:`, `test:`, `refactor:`, `style:` | **nothing at all** |
+
+That last row is the point. Every merge cutting a release would mean a version
+of the package for every typo fixed in the README, so a commit that changes
+nothing anyone installs releases nothing. To release anyway — or to force a
+particular part — run **release** from the Actions tab and pick the bump.
+
+Publishing by hand still works and still goes through the same file:
+
 ```bash
 npm pack                  # inspect exactly what would ship, first
 npm version patch         # commits and tags
-git push --follow-tags    # the tag triggers .github/workflows/publish.yml
+git push --follow-tags    # the tag triggers publish.yml on its own
 ```
 
-The workflow runs the suite, checks the tag matches `package.json`, and
-publishes with provenance. It needs an `NPM_TOKEN` secret on the repository.
-Publishing by hand is `npm publish` after `npm test`.
+**`release.yml` calls `publish.yml` instead of leaving it to the tag it just
+pushed.** A tag pushed by a workflow using `GITHUB_TOKEN` deliberately does not
+trigger another workflow — GitHub's guard against a run that starts itself for
+ever. Left to the tag, every automatic release would tag itself, publish
+nothing, and report success. Because it is *called*, the tag has to be passed in
+as an input: a called workflow otherwise checks out the commit that triggered
+the *caller*, which is the one before the version bump, and would test the new
+version while publishing the old one.
+
+Nothing installs anything on CI. The engine and the whole desktop app are
+dependency-free, so `node --test` runs the suite against a bare checkout, and
+Electron — a real dependency of the *package*, so that `npx claude-strays` can
+start the app — is never fetched to run tests that open no window.
+
+### Credentials
+
+`publish.yml` uses an `NPM_TOKEN` secret if the repository has one, and
+otherwise expects **trusted publishing**: npm verifies the run cryptographically
+against a publisher you register at npmjs.com naming this repo and
+`.github/workflows/publish.yml`, so no long-lived secret exists to leak. That is
+the better of the two, and it is why the workflow pins Node 24 — trusted
+publishing needs npm 11.5.1 or newer, and Node 20 ships npm 10.
+
+Neither can do the *first* publish: a package has to exist before it can have a
+trusted publisher, and the account's 2FA covers the first write. So publish
+`1.0.0` by hand, then tag it — `git tag v1.0.0 && git push origin v1.0.0` — so
+the automatic bump has a baseline to count from. Without that tag the first
+automatic run reads the entire history.
 
 `files` in package.json is a **whitelist**. Anything left out of it is simply
 missing for everyone who installed from npm while working perfectly in the
 checkout it was tested in — `test/cli.test.js` asserts the runtime pieces are
-listed, and `npm pack` shows the real answer.
+listed, and `publish.yml` re-checks the real tarball with `npm pack` before it
+uploads anything.
 
 ## Tests
 
