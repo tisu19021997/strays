@@ -43,9 +43,27 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # 24 ships npm 11.x. Trusted publishing needs npm 11.5.1+, and this is
-          # the cheapest way to be past that floor.
+          # 24 bundles npm 11.x, which is the floor trusted publishing needs —
+          # but only from 11.5.1, and early 24.x releases shipped 11.3. The step
+          # below makes that certain rather than assumed.
           node-version: 24
+
+      # Trusted publishing (OIDC) needs npm 11.5.1. Which npm a Node release
+      # bundles is not something to guess at: below the floor the publish fails
+      # with an authentication error that says nothing about the real cause, and
+      # the obvious conclusion — that the trusted publisher is set up wrong — is
+      # the wrong one. `sort -V` compares versions properly, so 11.10 counts as
+      # above 11.5.1 rather than below it.
+      - name: An npm that can use trusted publishing
+        run: |
+          node -v && npm -v
+          need=11.5.1
+          have="$(npm -v)"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            echo "npm $have is below $need — upgrading"
+            npm install -g npm@latest
+            npm -v
+          fi
 
       # no install: the suite is dependency-free. See ci.yml.
       - name: Test
