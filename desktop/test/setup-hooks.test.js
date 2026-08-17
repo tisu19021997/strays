@@ -59,8 +59,11 @@ test('the installer registers both hooks', () => {
   const { settings } = install(configDir());
   assert.equal(ours(settings.hooks.PreToolUse).length, 1, 'the approval gate');
   assert.equal(ours(settings.hooks.SessionStart).length, 1, 'the session-host recorder');
-  assert.match(ours(settings.hooks.PreToolUse)[0], /hooks\/gate\.js/);
-  assert.match(ours(settings.hooks.SessionStart)[0], /hooks\/session-start\.js/);
+  // either separator: the command is a shell line, not a rule to be matched, so
+  // the installer writes a native path and `desktop\hooks\gate.js` is correct on
+  // Windows. Only path *rules* are normalised to POSIX — see permissions.js.
+  assert.match(ours(settings.hooks.PreToolUse)[0], /hooks[\\/]gate\.js/);
+  assert.match(ours(settings.hooks.SessionStart)[0], /hooks[\\/]session-start\.js/);
 });
 
 test('hooks belonging to other tools are left untouched', () => {

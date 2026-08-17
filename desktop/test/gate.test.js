@@ -292,7 +292,15 @@ test('expired requests are pruned when the gate next runs', async () => {
   assert.deepEqual(pendingFiles(home), ['live.json'], 'only the request still in flight survives');
 });
 
-test('a killed gate takes its request with it', async () => {
+/*
+ * Windows has no signal to catch. `child.kill('SIGTERM')` there is
+ * TerminateProcess: no handler runs, no `finally` runs, and nothing the gate
+ * could be written to do would change that. So the guarantee below is a POSIX
+ * one, and on Windows a cancelled call leaves its request until it expires —
+ * which is what the expiry is for, and what 'expired requests are pruned when
+ * the gate next runs' covers on every platform.
+ */
+test('a killed gate takes its request with it', { skip: process.platform === 'win32' && 'no catchable signals on Windows' }, async () => {
   // A cancelled tool call kills the hook outright: try/finally never runs, and
   // the request it leaves behind becomes a card for a command nobody is waiting
   // on. There is one of these on the reporter's machine as this is written.

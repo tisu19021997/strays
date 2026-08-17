@@ -339,6 +339,43 @@ test('an allow rule on a path is honoured for a Windows path', () => {
   );
 });
 
+test('a source-anchored rule is honoured on a lettered drive', () => {
+  /*
+   * The `//abs` form is what the loader rewrites a source-relative rule into, so
+   * this is every path rule a Windows user writes in project settings. The first
+   * slash is a marker and the rest is the path; on POSIX the path is itself `/…`
+   * and the two share a slash, but `C:/…` has none of its own, so unwrapping the
+   * marker by dropping one slash leaves `/C:/…` and matches nothing at all.
+   *
+   * That failed in both directions and neither was visible: an allow rule went
+   * inert and raised a card for every edit, and a deny rule went inert while the
+   * allow beside it still matched — so the card that came up let a click on Allow
+   * walk past the deny. The POSIX spelling is asserted alongside, because the
+   * bug was a fix that agreed with POSIX by accident.
+   */
+  const allowed = rules({ allow: ['Edit(//C:/Users/testuser/Projects/demo/src/**)'] });
+  assert.equal(
+    predictPrompt(winPayload('C:\\Users\\testuser\\Projects\\demo\\src\\app.js'), allowed).prompts,
+    false, 'an anchored allow rule covers the file it names');
+  assert.equal(
+    predictPrompt(winPayload('C:\\Users\\testuser\\Projects\\demo\\vendor\\app.js'), allowed).prompts,
+    true, 'and still only that file');
+
+  const denied = rules({
+    allow: ['Edit(**)'],
+    deny: ['Edit(//C:/Users/testuser/Projects/demo/secrets/**)'],
+  });
+  const verdict = predictPrompt(
+    winPayload('C:\\Users\\testuser\\Projects\\demo\\secrets\\prod.pem'), denied);
+  assert.equal(verdict.prompts, false);
+  assert.match(verdict.reason, /deny/i, 'the anchored deny is what decided it');
+
+  // the same form, spelled for a filesystem with no drive letters
+  const posix = rules({ allow: ['Edit(//Users/testuser/Projects/demo/src/**)'] });
+  assert.equal(predictPrompt(edit('/Users/testuser/Projects/demo/src/app.js'), posix).prompts,
+    false, 'the POSIX spelling of the same form still works');
+});
+
 test('a Windows path is matched without regard to case', () => {
   /*
    * Windows filenames are case-insensitive, so `Secrets` and `secrets` are one

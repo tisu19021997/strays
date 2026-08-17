@@ -63,8 +63,18 @@ function anchorToSource(rule, source) {
    * matcher reads a rule as a forward-slash glob. An anchored rule spelled with
    * backslashes can never match anything, which silently drops every path rule
    * a settings file contributed.
+   *
+   * The `//` is written out rather than assembled from one slash plus a source
+   * that happens to start with another. A POSIX source does start with one, so
+   * `/` + `/tmp/project/src/**` fell into the right form by luck; a Windows
+   * source starts with a drive letter, so the same expression produced
+   * `/C:/project/src/**` — the single-slash form again, which the matcher reads
+   * as relative and which therefore matches nothing at all. Every anchored path
+   * rule on Windows was silently inert, and an inert rule is a `deny` the user
+   * wrote that is not in force.
    */
-  return `${tool}(/${path.posix.join(source.replace(/\\/g, '/'), arg)})`;
+  const abs = path.posix.join(source.replace(/\\/g, '/'), arg).replace(/^\/+/, '');
+  return `${tool}(//${abs})`;
 }
 
 /*

@@ -145,3 +145,25 @@ test('two sessions with different local sources are not served each other rules'
   assert.equal(editing(two, '/Users/testuser/one/src/app.js').prompts, true,
     "the second session's rules must not be the first session's cached ones");
 });
+
+test('anchoring does not depend on the source starting with a slash', () => {
+  /*
+   * The loader rewrites a source-relative rule into the filesystem-absolute
+   * `//abs` form. It used to build that from one slash plus a source that
+   * happened to start with another, which is true of every POSIX path and of no
+   * Windows one — a drive letter starts with `C`, so the result was `/C:/…`, the
+   * single-slash form again, and the matcher read it as relative to the working
+   * directory and matched nothing.
+   *
+   * A drive letter only exists on Windows, but "a source that does not start
+   * with a slash" is the shape that matters, and a relative source is the same
+   * shape everywhere. This is the guard; the Windows leg of CI is the proof.
+   */
+  const t = tree({ project: perms({ allow: ['Edit(/src/**)'] }) });
+  const relative = path.relative(process.cwd(), t.projectDir);
+  assert.ok(!relative.startsWith('/'), 'the source under test must not start with a slash');
+
+  const [rule] = loadRules({ ...t.scopes, projectDir: relative }).allow;
+  assert.match(rule, /^Edit\(\/\//,
+    'an anchored rule has to reach the matcher as //abs, whatever the source looked like');
+});

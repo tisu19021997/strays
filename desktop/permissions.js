@@ -252,6 +252,21 @@ const toPosix = (p) => String(p || '').replace(/\\/g, '/');
 const DRIVE = /^[A-Za-z]:\//;
 const isAbsolutePath = (p) => p.startsWith('/') || DRIVE.test(p);
 
+/*
+ * `//abs` unwrapped: the first slash is the marker saying "filesystem-absolute",
+ * and the rest is the path.
+ *
+ * On POSIX the path is itself `/…`, so the marker and the path share a slash and
+ * dropping one is exactly right. A lettered drive has no leading slash of its
+ * own, so dropping one leaves `/C:/…`, which cannot match a file that is always
+ * spelled `C:/…`. Every source-anchored rule on Windows was inert that way, and
+ * an inert deny is a deny that is not in force.
+ */
+const fromDoubleSlash = (pattern) => {
+  const rest = pattern.slice(2);
+  return DRIVE.test(rest) ? rest : '/' + rest;
+};
+
 /* gitignore-style: ** spans directories, * stops at one, ? is one character */
 function globToRegex(glob, nocase) {
   let source = '';
@@ -296,7 +311,7 @@ function pathPatternMatches(pattern, payload, broad) {
   const nocase = DRIVE.test(absolute);
 
   let globs;
-  if (pattern.startsWith('//')) globs = [pattern.slice(1)];
+  if (pattern.startsWith('//')) globs = [fromDoubleSlash(pattern)];
   else if (pattern.startsWith('~/')) globs = [joinPath(home, pattern.slice(2))];
   else if (pattern.startsWith('/')) globs = [pattern];
   else {

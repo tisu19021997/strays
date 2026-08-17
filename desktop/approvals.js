@@ -64,8 +64,24 @@ class Approvals {
 
   watch() {
     this.ensureDirs();
+    /*
+     * Watched by its real path, which on Windows is not a detail.
+     *
+     * libuv's fs-event asserts that the filename Windows reports starts with the
+     * directory it was handed, and Windows reports the long form. Hand it a path
+     * carrying an 8.3 short name — `C:\Users\RUNNER~1\AppData\Local\Temp`, which
+     * is what %TEMP% is on a GitHub runner, and what any account with a long
+     * username can produce — and that assertion fails inside native code:
+     *
+     *   Assertion failed: !_wcsnicmp(filename, dir, dirlen), fs-event.c line 72
+     *
+     * That is an abort, not an exception. Nothing catches it and the whole
+     * overlay goes, which is the one failure mode this file cannot afford.
+     */
+    let dir = this.pendingDir;
+    try { dir = fs.realpathSync.native(dir); } catch { /* just created; use it as given */ }
     // fs.watch is fine here: gate.js writes each request in a single writeFileSync
-    this.watcher = fs.watch(this.pendingDir, (_ev, filename) => {
+    this.watcher = fs.watch(dir, (_ev, filename) => {
       if (!filename || !filename.endsWith('.json')) return;
       const file = path.join(this.pendingDir, filename);
       if (fs.existsSync(file)) {
