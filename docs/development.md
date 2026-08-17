@@ -214,6 +214,38 @@ in the lane is painted white.
   in any release. `jumpMode` in `~/.strays/config.json` (`auto` | `never` |
   `always`) overrides the guess, and the tray writes it.
 
+- **Windows runs in CI, and the first run found four faults in code that had
+  only ever been reasoned about.** Two were real:
+
+  *Every source-anchored path rule was inert.* `settings.js` rewrites a
+  single-leading-slash rule into the filesystem-absolute `//abs` form, and built
+  it from one slash plus the source — which lands on `//` only because a POSIX
+  source starts with a slash of its own. A drive letter does not, so the result
+  was `/C:/project/src/**`: the single-slash form again, read as relative to the
+  working directory, matching nothing. `permissions.js` had the mirror of it,
+  unwrapping `//abs` by dropping one slash, which leaves `/C:/…` against a file
+  always spelled `C:/…`. Either alone is a `deny` that is not in force.
+
+  *A new session record hid behind a stale cache.* The desktop index is keyed on
+  the store's directory mtime; on Windows that does not reliably move when an
+  entry is added, so a session written moments after the last read was invisible
+  and its pet fell back to the resume deep link — a duplicate conversation, which
+  is the failure the index exists to prevent. The stamp now carries the entry
+  count too, which is free because the listing is already read to recurse.
+
+  The other two were the tests being wrong about Windows. `setup-hooks` writes a
+  *native* path into a shell command line, so `hooks\gate.js` is correct there —
+  only path **rules** are normalised to POSIX — and a killed gate cannot clean up
+  after itself on a platform with no catchable signals, so that guarantee is
+  marked POSIX-only and the request expiry covers Windows.
+
+  **Reproduce this class of fault where it does not bite.** A relative source has
+  the same shape as a drive letter, and a directory mtime pinned to a fixed
+  instant is the same as one that will not move — so both regressions are caught
+  on every platform. Pin such a timestamp to a literal rather than reading and
+  restoring it: a stat reports sub-millisecond precision that `utimes` cannot put
+  back, and the first attempt passed against the unfixed code for that reason.
+
 - **Paths are matched in POSIX form, always.** `permissions.js` normalises both
   the rule and the file through `toPosix()` and treats `C:/…` as absolute
   alongside `/…`, and `settings.js` anchors rules with `path.posix.join`. This is

@@ -141,6 +141,22 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   takes its fill from the speaking pet's own `pal[1]`, which is also what says
   who is talking.
 
+- **Windows is in CI now, and it found four things reasoning had not.** Two were
+  real. A source-anchored path rule matched *nothing at all* there: `settings.js`
+  built the `//abs` form from one slash plus a source that happens to start with
+  another — true of every POSIX path, false of every drive letter — and
+  `permissions.js` unwrapped `//abs` by dropping one slash, which is right only
+  when the marker and the path share it. And the desktop session index is cached
+  on directory mtime, which on Windows does not reliably move when a record is
+  added, so a new session stayed invisible and its pet fell back to
+  `claude://resume`. The other two were tests assuming POSIX: the installer
+  writes a *native* path into a shell command (`hooks\gate.js` is correct there —
+  only path **rules** are normalised), and a killed gate cannot clean up on a
+  platform with no catchable signals, so that guarantee is POSIX-only and the
+  request's expiry is what covers Windows. Reproduce this class of bug on any
+  platform rather than only where it bites — a relative source has the same shape
+  as a drive letter, and a pinned mtime is the same as one that will not move.
+
 - **Paths are matched in POSIX form, and platform branches need three arms.**
   `permissions.js` normalises rules and files through `toPosix()` and counts
   `C:/…` as absolute; matching goes case-insensitive only when the path carries a

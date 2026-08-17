@@ -144,11 +144,12 @@ catch the pointer, which Electron supports on macOS and Windows but not on
 Linux. So on Linux the pets are a display: they show you what's happening, but
 the cards can't be clicked.
 
-macOS is what gets exercised daily, and it's the only platform these have been
-run on end to end. The Windows paths through the permission rules, the settings
-loader and the tray have been fixed and unit-tested, but not yet run on a real
-Windows machine — if something's off there, an issue saying what you saw is
-genuinely useful.
+macOS is what gets exercised daily. The suite now runs on Linux and Windows too,
+on every push — which immediately turned up two real Windows bugs: path rules
+written in project settings matched nothing at all, and a brand-new session
+could be missed. Both are fixed. The desktop *features* above still have only
+been exercised by hand on macOS, so if something is off elsewhere, an issue
+saying what you saw is genuinely useful.
 
 ## The tray
 
