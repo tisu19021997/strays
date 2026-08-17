@@ -98,6 +98,22 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   desktop app's Chromium leveldb, snappy compressed and with no compatibility
   promise; `lastFocusedAt` on each session record is the honest proxy. The tray's
   "Clicking a pet" submenu writes `jumpMode` for anyone the heuristic misjudges.
+- **`update.js` holds the only network request in the project.** It asks npm for
+  `dist-tags.latest` once a day, sends nothing else, resolves to `null` on any
+  failure, cannot throw, and installs nothing — a line in the tray, not a
+  self-replacing app that takes the user's pets away mid-session. It is the one
+  thing here that can make the README's privacy claim untrue, so keep that claim
+  and the code in step, and keep the network behind the seam that lets the rest
+  be tested offline. A negative answer is cached deliberately, and a stamp dated
+  in the future is re-checked rather than trusted.
+
+- **The dice are seeded in `render-loop.test.js` and `pets-binding.test.js`.**
+  Random pet states and start positions failed about one process in four: a
+  sprite first drawn after the warm-up looks exactly like the canvas leak, and a
+  fish starting against the far wall cannot move. Nine CI legs turn that into a
+  red on nearly every push. Exhaustive coverage comes from `DRAWN_STATES`, not
+  from the dice.
+
 - **Hooks are read at session start.** After `npm run hooks`, already-open
   Claude Code sessions keep the hooks they started with.
 - **The lane's chrome is one column per pet, two tiers at most.** A pet's

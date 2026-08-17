@@ -57,7 +57,9 @@ Want a fifth? [Draw one.](#make-your-own)
 - **Heisenbug keeps the receipts.** Hover her for today's tokens and roughly
   what they cost.
 
-Everything happens on your own machine. Nothing is sent anywhere.
+Everything happens on your own machine. The one exception is a version check
+once a day, so the tray can tell you when there's a newer strays — it sends
+nothing about you and it's switchable. There is no telemetry.
 
 ## Get them
 
@@ -97,6 +99,31 @@ npm start
 
 `npm test` runs the suite. Everything else is in
 [docs/development.md](docs/development.md).
+
+</details>
+
+<details>
+<summary><b>Keeping them up to date</b></summary>
+
+If you use `npx claude-strays`, you already are — npx asks the registry for the
+latest version every time you run it.
+
+If you installed globally, you're pinned to the version you installed until you
+say otherwise:
+
+```bash
+npm install -g claude-strays@latest
+```
+
+You don't have to remember to check. Once a day the overlay asks npm what the
+latest version is, and if it's newer than yours the tray grows a line saying so,
+with the exact command for the way you installed it — **🐾 → Copy the update
+command**. Nothing installs itself: replacing the app underneath you would take
+your pets away mid-session, which is worse than being a version behind.
+
+That check is the only network request strays makes. **🐾 → Don't check for
+updates** turns it off, and so does `"updateCheck": false` in
+`~/.strays/config.json`.
 
 </details>
 
@@ -162,6 +189,7 @@ tray:
 | **Name the session on each pet** | Off leaves the state badge but drops the name. |
 | **Heisenbug wanders off when you leave** | She teleports across the lane once you've been away from the keyboard a while. Off means she stays put. |
 | **Clicking a pet** | Whether landing on a session may rearrange your panes — see below. |
+| **Don't check for updates** | Appears once there's a newer version. Stops the daily version check for good. |
 | **Command approvals** | Turns the Allow / Deny cards on, once the hooks are installed. |
 | **Party mode** / **Celebrate** | Hats, and confetti on demand. |
 | **Pause pets** | Hides the lane without quitting. |
@@ -235,7 +263,14 @@ approval traffic.
 
 Everything the app reads is local: transcript timestamps and the last line of
 each file under `~/.claude/projects`, and the Claude desktop app's own session
-records. Nothing is sent anywhere, and there is no telemetry.
+records. None of it is sent anywhere, and there is no telemetry — no accounts,
+no identifiers, nothing about you or your code leaves the machine.
+
+The single network request the app makes is a once-a-day `GET` to
+`registry.npmjs.org` asking what the latest published version is. It carries no
+information beyond the request itself, its answer only ever becomes a line in
+the tray, and **🐾 → Don't check for updates** — or `"updateCheck": false` in
+`~/.strays/config.json` — stops it for good.
 
 ## License
 

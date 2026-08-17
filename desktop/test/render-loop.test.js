@@ -64,6 +64,29 @@ globalThis.cancelAnimationFrame = () => { pending = null; };
 let clock = 0;
 globalThis.performance = { now: () => clock };
 
+/*
+ * The dice, seeded.
+ *
+ * Every pet decides what to do next at random, so which states a run reaches —
+ * and therefore which sprites get cached — differs on every process. A state
+ * whose first occurrence lands after the warm-up mints a canvas late and reads
+ * exactly like the leak this file exists to catch, so the suite failed about one
+ * run in four for a reason that had nothing to do with the code. Nine CI legs
+ * make that a near-certain red on every push.
+ *
+ * A fixed sequence trades exploration for a result that means something. The
+ * exhaustive coverage lives in pets-binding's DRAWN_STATES, which draws every
+ * pet in every state on purpose rather than hoping to wander into them.
+ */
+let seed = 0x2f6e2b1;
+Math.random = () => {
+  // xorshift32: a deterministic stream, and short enough to be obviously right
+  seed ^= seed << 13; seed >>>= 0;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5; seed >>>= 0;
+  return seed / 0x100000000;
+};
+
 const Strays = require('../../strays.js');
 
 const FPS = 60;

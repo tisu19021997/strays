@@ -21,6 +21,7 @@ desktop/settings.js     finds and merges Claude Code's permission rules
 desktop/requests.js     how long an approval request still means anything
 desktop/sessions.js     where a pet click should land (pure)
 desktop/usage.js        Heisenbug's token and cost tracker
+desktop/update.js       is there a newer strays? (the only network call there is)
 desktop/hooks/gate.js            the PreToolUse approval gate
 desktop/hooks/session-start.js   records which terminal launched a session
 desktop/setup-hooks.js  installs/removes the hooks in ~/.claude/settings.json
@@ -375,6 +376,43 @@ in the lane is painted white.
   forwards returns the pet *behind* the visible one. A click could get away with
   that; a carry cannot, because the wrong animal comes away in your hand and the
   one you aimed at does not move.
+
+- **The update check is the only network request in the project, and it is the
+  one thing here that can make a promise in the README untrue.** So it is built
+  to be defensible rather than merely to work: it asks `registry.npmjs.org` for
+  `dist-tags.latest` at most once a day, sends nothing but the request, resolves
+  to `null` on absolutely anything (offline, a proxy, a 500, a timeout, a body
+  that is not JSON), and can never throw — an update check that can fail is one
+  that can take the overlay down, and the overlay is the product. It installs
+  nothing: replacing the app underneath a running session takes the user's pets
+  away, which is worse than being a version behind, so the answer becomes a line
+  in the tray and a command on the clipboard.
+
+  `update.js` keeps the network behind a seam — everything but `fetchLatest()` is
+  pure and takes the fetch as an argument — which is what lets the whole matrix
+  be tested offline. Two of those cases are not obvious. A **negative** answer is
+  cached too: the interval exists to make one request a day, not one request a
+  day that happens to find something, and caching only the good answers means
+  asking on every launch for everyone who is up to date, which is nearly
+  everyone. And a stamp dated in the *future* is re-checked rather than trusted,
+  because that is a clock that moved — for a machine set years ahead, "fresh"
+  would otherwise mean forever.
+
+  The command it offers depends on how the copy was installed: `npx` resolves
+  `latest` on every run, so an npx user is told there is nothing to do rather
+  than given a command that does nothing; a global install gets
+  `npm install -g claude-strays@latest`; a checkout gets `git pull`.
+
+- **The dice are seeded in `render-loop.test.js` and `pets-binding.test.js`.**
+  Pets choose their next state at random and start at random positions, so
+  roughly one process in four failed for reasons that had nothing to do with the
+  code: a sprite whose state was first reached *after* the render-loop warm-up
+  mints a canvas late and looks exactly like the leak that file exists to catch,
+  and a fish that starts pinned against the far wall facing outward is clamped
+  back to the same x, so "she moved" is false. With nine CI legs a one-in-four
+  flake is a near-certain red on every push. The trade is deliberate: exhaustive
+  state coverage comes from `DRAWN_STATES`, which draws every pet in every state
+  on purpose instead of hoping to wander into them.
 
 - **Hooks are read at session start.** After `npm run hooks`, already-open
   Claude Code sessions keep the hooks they started with.

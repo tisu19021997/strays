@@ -97,6 +97,24 @@ let clock = 0;
 globalThis.performance = { now: () => clock };
 const waitLongEnoughToBeAlone = () => { clock += 60 * 1000; };
 
+/*
+ * The dice, seeded — see the same note in render-loop.test.js.
+ *
+ * Pets choose their next state at random and start at random positions, so a
+ * handful of these tests passed or failed on the seed the process happened to
+ * get: a fish that starts pinned against the far wall facing outward is clamped
+ * back to the same x, and "she moved" is then false through no fault of the
+ * engine. Deterministic dice make a failure here mean something and make it
+ * reproducible.
+ */
+let seed = 0x5f3a91c;
+Math.random = () => {
+  seed ^= seed << 13; seed >>>= 0;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5; seed >>>= 0;
+  return seed / 0x100000000;
+};
+
 const Strays = require('../../strays.js');
 
 // ------------------------------------------------------------- test helpers

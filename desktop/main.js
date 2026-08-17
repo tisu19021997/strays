@@ -11,7 +11,7 @@
  *   - tap a pet -> its own conversation comes to the front (macOS)
  *   - Allow/Deny approval cards, via the PreToolUse gate (npm run hooks)
  */
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, powerMonitor } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, powerMonitor, clipboard } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -20,6 +20,7 @@ const { ClaudeWatcher } = require('./watcher');
 const { UsageTracker } = require('./usage');
 const { resolveJumpTarget, loadDesktopIndex, readSessionHost } = require('./sessions');
 const { Approvals } = require('./approvals');
+const { checkForUpdate } = require('./update');
 
 const LANE_HEIGHT = 190;
 
@@ -39,12 +40,14 @@ const APPROVALS_FLAG = path.join(BASE_DIR, 'approvals-on');
 const ALIVE_FILE = path.join(BASE_DIR, 'overlay.alive');
 const PENDING_DIR = path.join(BASE_DIR, 'pending');
 const REPLIES_DIR = path.join(BASE_DIR, 'replies');
+const UPDATE_STAMP = path.join(BASE_DIR, 'update-check.json');
 
 let win = null;
 let tray = null;
 let watcher = null;
 let usage = null;
 let usageLine = null;
+let updateNotice = null;   // set once, if a newer strays exists; see lookForUpdate()
 let paused = false;
 let party = false;
 let followClaude = true;
@@ -229,10 +232,50 @@ function rebuildTrayMenu() {
         rebuildTrayMenu();
       },
     },
+    /*
+     * An update, when there is one. It is a menu item and not a dialog on
+     * purpose: a desk toy that interrupts you to talk about itself has missed
+     * the point, and nothing here installs anything — the pets would vanish
+     * mid-session, which is a worse outcome than being one version behind.
+     */
+    ...(updateNotice ? [
+      { type: 'separator' },
+      { label: updateNotice.label, enabled: false },
+      { label: updateNotice.detail, enabled: false },
+      ...(updateNotice.command ? [{
+        label: 'Copy the update command',
+        click: () => clipboard.writeText(updateNotice.command),
+      }] : []),
+      {
+        label: "Don't check for updates",
+        click: () => { writeConfig({ updateCheck: false }); updateNotice = null; rebuildTrayMenu(); },
+      },
+    ] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
+}
+
+/*
+ * Whether there is a newer strays, once a day at most.
+ *
+ * The only network request the project makes, and the only one it will make: it
+ * sends nothing but the request, and it is off the moment anyone says so —
+ * `updateCheck: false` in ~/.strays/config.json, or the tray item. It never
+ * blocks boot and it can never fail loudly; the worst case is a menu that says
+ * nothing, which is also what it says when you are up to date.
+ */
+function lookForUpdate() {
+  if (readConfig().updateCheck === false) return debug('[update] check is switched off');
+  checkForUpdate({ current: app.getVersion(), stampFile: UPDATE_STAMP })
+    .then((notice) => {
+      debug('[update]', notice ? notice.label : 'up to date, or no answer');
+      if (!notice) return;
+      updateNotice = notice;
+      rebuildTrayMenu();
+    })
+    .catch((e) => debug('[update] check failed:', e.message));
 }
 
 function send(channel, payload) {
@@ -339,6 +382,8 @@ app.whenReady().then(() => {
   const beat = () => { try { fs.writeFileSync(ALIVE_FILE, String(process.pid)); } catch { /* ro fs */ } };
   beat();
   aliveTimer = setInterval(beat, 5000);
+
+  lookForUpdate();
 
   /*
    * Is the developer actually at the machine?
