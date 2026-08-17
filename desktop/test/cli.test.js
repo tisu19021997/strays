@@ -21,6 +21,20 @@ const strays = (args, env = {}) => spawnSync(process.execPath, [BIN, ...args], {
   env: { ...process.env, ...env },
 });
 
+test('the published name and the typed name differ, deliberately', () => {
+  /*
+   * npm's typosquatting guard refuses `strays` as too close to the existing
+   * `stres`, so the package is `claude-strays` and the command is `strays`.
+   * Making them agree is the obvious tidy-up and it is wrong in both
+   * directions: renaming the package back breaks the publish outright, and
+   * renaming the command silently takes `strays` away from everyone who has
+   * already installed it.
+   */
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.name, 'claude-strays', 'the registry will not accept `strays`');
+  assert.deepEqual(Object.keys(pkg.bin), ['strays'], 'but the command stays `strays`');
+});
+
 test('the package declares the command, and the command is there', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.bin.strays, 'bin/strays.js');

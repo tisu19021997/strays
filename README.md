@@ -60,7 +60,7 @@ One command, same on macOS, Windows and Linux. You need
 [Node.js](https://nodejs.org) 18 or newer; nothing else.
 
 ```bash
-npx strays
+npx claude-strays
 ```
 
 That's it — the pets come out. A 🐾 appears in your menu bar (macOS) or system
@@ -70,11 +70,15 @@ tray (Windows, Linux), and that's where everything lives; see
 To keep the command around instead of fetching it each time:
 
 ```bash
-npm install -g strays
+npm install -g claude-strays
 strays              # start them
 strays stop         # send them home
 strays --help       # everything else
 ```
+
+Yes, the package is `claude-strays` and the command is `strays`. npm won't hand
+out `strays` — it's too close to an existing package called `stres` — but the
+thing you type is unaffected.
 
 <details>
 <summary><b>Or from the source</b> — if you'd rather read it first</summary>

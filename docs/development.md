@@ -45,8 +45,15 @@ npm test         # bare `node --test` — a directory argument does not work
 
 ## Releasing
 
-The repo root **is** the npm package `strays`. `bin/strays.js` is the command
-people get from `npx strays` or a global install, and Electron is a real
+The repo root **is** the npm package `claude-strays`. The package name and the
+command name differ on purpose: npm's typosquatting guard rejects `strays` as
+too close to the existing `stres`, so the registry name is `claude-strays` and
+the thing people type stays `strays`. `test/cli.test.js` pins both, because the
+obvious "cleanup" is to make them match, and doing so either breaks the publish
+or silently renames the command out from under everyone who installed it.
+
+`bin/strays.js` is the command
+people get from `npx claude-strays` or a global install, and Electron is a real
 dependency rather than a dev one so that `npx` can start the app on its own.
 `desktop/package.json` carries no dependencies and exists only to tell Electron
 which file is `main`.
