@@ -35,8 +35,32 @@ const run = (dir, args = []) => spawnSync(process.execPath, [STOP, ...args], {
 });
 
 const alive = (pid) => {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); return true; }
+  // EPERM is a process that exists and will not take our signals, which is
+  // still very much alive. Only ESRCH means gone.
+  catch (err) { return err.code === 'EPERM'; }
 };
+
+/*
+ * Block for a moment without spawning anything.
+ *
+ * This used to run `node -e 'setTimeout(…)'` in a loop as "a short, portable
+ * pause", which is up to a hundred processes per wait — enough contention, with
+ * the rest of the suite running in parallel, to make the *next* spawn fail with
+ * EAGAIN and the test blame a perfectly good stop.js. Atomics.wait blocks the
+ * main thread in Node, which is exactly what a synchronous test wants.
+ */
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/* poll a predicate until it is truthy, or give up; never throws out of fn */
+function waitFor(fn, ms = 5000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { const v = fn(); if (v) return v; } catch { /* not yet */ }
+    if (Date.now() >= deadline) return null;
+    sleep(25);
+  }
+}
 
 /*
  * A process that is nobody's child, the way a running overlay is nobody's child
@@ -47,27 +71,43 @@ const alive = (pid) => {
  * would report a process that had plainly exited as still running. Launching it
  * through a middleman that immediately exits orphans it, so the system reaps it
  * properly and its pid stops resolving the moment it dies.
+ *
+ * The stand-in announces itself by writing its own pid, and the pid it writes is
+ * the one under test. Taking the pid from the middleman instead left a window
+ * where a spawn that had failed — or simply not finished booting — was
+ * indistinguishable from a process that had died, and the failure it produced
+ * pointed at stop.js rather than at the harness.
  */
-function spawnOrphan() {
+function spawnOrphan(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'strays-orphan-'));
+  const file = path.join(dir, 'pid');
+  const standIn = 'require("fs").writeFileSync(process.argv[1], String(process.pid));'
+                + 'setInterval(() => {}, 1000);';
+
   const out = spawnSync(process.execPath, ['-e', `
     const { spawn } = require('child_process');
-    const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+    const c = spawn(process.execPath, ['-e', ${JSON.stringify(standIn)}, ${JSON.stringify(file)}],
       { detached: true, stdio: 'ignore' });
     c.unref();
-    console.log(c.pid);
   `], { encoding: 'utf8' });
-  const pid = parseInt(out.stdout.trim(), 10);
-  assert.ok(Number.isInteger(pid) && alive(pid), 'the stand-in process should be running');
+  assert.equal(out.status, 0,
+    'could not launch the stand-in: ' + (out.stderr || out.error || 'no reason given'));
+
+  const pid = waitFor(() => {
+    const n = parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  });
+  assert.ok(pid, 'the stand-in never reported a pid, so it never started');
+  assert.ok(alive(pid), 'the stand-in reported pid ' + pid + ' and then died');
+
+  t.after(() => {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
   return pid;
 }
 
-const waitGone = (pid, ms = 5000) => {
-  const deadline = Date.now() + ms;
-  while (alive(pid) && Date.now() < deadline) {
-    spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 50)']); // a short, portable pause
-  }
-  return !alive(pid);
-};
+const waitGone = (pid, ms = 5000) => Boolean(waitFor(() => !alive(pid), ms));
 
 test('a stale heartbeat is never acted on, however alive the pid looks', () => {
   /*
@@ -85,15 +125,11 @@ test('a stale heartbeat is never acted on, however alive the pid looks', () => {
   assert.ok(!fs.existsSync(file), 'a heartbeat that stale should be tidied away');
 });
 
-test('a fresh heartbeat stops the process it names', () => {
-  const pid = spawnOrphan();
-  try {
-    const out = run(home(pid).dir);
-    assert.match(out.stdout, new RegExp('asked overlay ' + pid));
-    assert.ok(waitGone(pid), 'the overlay it named should have been stopped');
-  } finally {
-    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-  }
+test('a fresh heartbeat stops the process it names', (t) => {
+  const pid = spawnOrphan(t);
+  const out = run(home(pid).dir);
+  assert.match(out.stdout, new RegExp('asked overlay ' + pid));
+  assert.ok(waitGone(pid), 'the overlay it named should have been stopped');
 });
 
 test('no file, or a file with nothing useful in it, is not an error', () => {
@@ -110,14 +146,10 @@ test('no file, or a file with nothing useful in it, is not an error', () => {
   assert.match(out.stdout, /no overlay running/);
 });
 
-test('--wait does not return until the process is really gone', () => {
+test('--wait does not return until the process is really gone', (t) => {
   // restart launches the next overlay as soon as this exits, and a copy started
   // while the old one is still quitting loses the single-instance lock to it
-  const pid = spawnOrphan();
-  try {
-    run(home(pid).dir, ['--wait']);
-    assert.ok(!alive(pid), '--wait returned while the process was still up');
-  } finally {
-    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-  }
+  const pid = spawnOrphan(t);
+  run(home(pid).dir, ['--wait']);
+  assert.ok(!alive(pid), '--wait returned while the process was still up');
 });
