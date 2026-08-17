@@ -34,14 +34,14 @@ jobs:
       contents: read
       id-token: write # provenance, and trusted publishing if it is set up
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # a called workflow otherwise checks out the commit that triggered the
           # *caller*, which is the one before the version bump — it would test
           # the new version and publish the old one
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # 24 ships npm 11.x. Trusted publishing needs npm 11.5.1+, and this is
           # the cheapest way to be past that floor.
