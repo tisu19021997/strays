@@ -1,7 +1,7 @@
 {
   "//name": "Published as claude-strays: npm's typosquatting guard refuses `strays` as too close to the existing `stres`. The command it installs is still `strays`.",
   "name": "claude-strays",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "A tiny team of pixel pets that live at the bottom of your screen and react to Claude Code sessions.",
   "keywords": [
     "claude",
