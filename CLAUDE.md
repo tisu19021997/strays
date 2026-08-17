@@ -107,6 +107,33 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   session name. All chrome is drawn in its own pass after the world, so a
   drifting particle cannot land on a label.
 
+- **A click is a press that stays put; anything else is a carry.** Dragging a
+  pet and opening its conversation are different intentions, so the jump moved
+  from `mousedown` to the release and only fires when the press never travelled
+  `DRAG_SLOP`. Firing on the press cannot tell the two apart even in principle,
+  so every drag was also a navigation. The carry then has to hold the lane for
+  its whole length: the overlay makes its window click-through the moment
+  nothing is hovered, so if hover drops mid-carry — by lifting the pet clear of
+  the band `hitTest` catches it in, or by holding still through the idle hover
+  timeout — the `mouseup` lands in the app underneath and the pet is stuck to
+  the cursor with nothing that can put it down. `liftCeiling()` is the other
+  half: a pet held higher than the lane wears a nameplate clipped off the top of
+  the screen.
+
+- **A carried pet is drawn turned, and that is the lane's only transform.**
+  `tiltAbout()` saves the context and the caller restores it; leave that
+  unbalanced and it is not one bad frame, it is every later frame drawn at an
+  angle that `clearRect` cannot take off. `draw()` therefore re-applies the base
+  transform each frame rather than trusting the stack, and
+  `test/pets-binding.test.js` counts saves against restores. The wiggle itself
+  costs nothing in the sprite cache — it is a `rotate`, not a new bitmap — and
+  it must stay that way; see the cache note above.
+
+- **`hitTest` searches the pet list backwards.** Pets are drawn in array order,
+  so the last one drawn is the one on top and the one being pointed at.
+  Forwards returns the pet *behind* it, which a click could get away with and a
+  carry cannot: the wrong animal comes away in your hand.
+
 - **Nothing in the lane may be white or translucent.** It floats over whatever
   window happens to be underneath: the old white speech bubble was invisible
   over a light one. Surfaces are opaque, built with `pixelPlate()` — flat fill,

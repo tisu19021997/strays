@@ -47,6 +47,11 @@ Want a fifth? [Draw one.](#make-your-own)
 - **Click a pet to go to it.** You land in that pet's conversation, not just
   somewhere in the app — and if you're working in a split layout, clicking won't
   tear it down to a single session.
+- **Pick one up and put it somewhere else.** Drag a pet along the lane and it
+  squirms in your hand like any animal that would rather not be held — the cats
+  twist, Grep swings, Heisenbug just vibrates. Let go and it drops back to the
+  floor. Dragging never opens the conversation; a click is a press that stays
+  put.
 - **Say yes without switching windows.** When Claude asks permission for
   something, a little card pops up over the pets. Click Allow and carry on.
 - **Heisenbug keeps the receipts.** Hover her for today's tokens and roughly
@@ -126,6 +131,7 @@ everywhere yet:
 | The pets, the lane, session states | ✅ | ✅ | ✅ |
 | Session names, badges, token and cost counter | ✅ | ✅ | ✅ |
 | Hover a pet for details | ✅ | ✅ | ❌ |
+| Pick a pet up and drag it | ✅ | ✅ | ❌ |
 | Allow / Deny cards | ✅ | ✅ | ❌ |
 | Click a pet to jump to its session | ✅ | ❌ | ❌ |
 

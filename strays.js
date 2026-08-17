@@ -377,6 +377,7 @@
       pets: [], particles: [], bubbles: [], confetti: [],
       ball: { x: 0, y: 0, vx: 0, vy: 0, held: null },
       mouse: { x: -9999, y: -9999, active: false },
+      grab: null,         // the pet currently under a press; see grabPet()
       observed: true,
       lastMouseMove: 0,
       badFrames: 0,      // frames the draw loop threw out of; see tick()
@@ -437,6 +438,7 @@
       state: 'walk', stateT: rand(1, 3),
       speed: 26, scale: world.opts.scale,
       frame: 0, frameT: 0, bob: 0,
+      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0,   // held or falling; see grabPet()
       name: kind, hat: world.opts.party,
       session: null,
     };
@@ -466,6 +468,7 @@
       speed: def.speed || 28,
       scale: def.scale || world.opts.scale,
       frame: 0, frameT: 0, bob: 0,
+      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0,
       hat: world.opts.party,
       pal: def.palette,
       phrases: def.phrases || [],
@@ -480,11 +483,19 @@
 
   const floorY = (world) => world.h - 14;
 
+  // how far above the floor Heisenbug hovers. The helmet is doing its job.
+  const FISH_HOVER = 22;
+
   // ------------------------------------------------------------- pet update
   function updatePet(world, pet, dt) {
     pet.stateT -= dt;
     pet.frameT += dt;
-    if (pet.frameT > 0.18) { pet.frameT = 0; pet.frame = 1 - pet.frame; }
+    // legs scrabble in the air rather than walk: the same two frames, cycled
+    // about three times as fast, which is most of what sells the panic
+    const airborne = pet.state === 'held' || pet.state === 'falling';
+    if (pet.frameT > (airborne ? squirmStyle(pet).step : 0.18)) {
+      pet.frameT = 0; pet.frame = 1 - pet.frame;
+    }
 
     const pw = petWidth(pet);
 
@@ -503,9 +514,17 @@
         if (pet.kind === 'grep') say(world, pet, 'woof. 1 match found: you', 2.2);
         else if (pet.kind === 'heisenbug') say(world, pet, pick(HEISENBUG_ALIBIS), 2.2);
         else if (pet.state !== 'deadlock') say(world, pet, pet.custom && pet.phrases.length ? pick(pet.phrases) : 'purr', 1.6);
-        if (pet.session && world.opts.onPetClick) world.opts.onPetClick(pet.session);
       }
     } else pet.petted = false;
+
+    // in hand, or on the way back down out of it. Both come before the fish
+    // hands off to its own update for the same reason petting does: she can be
+    // picked up like anyone else.
+    if (pet.state === 'held') {
+      if (world.grab && world.grab.pet === pet) return dragPet(world, pet, dt);
+      pet.state = 'falling'; // the grab went away underneath it
+    }
+    if (pet.state === 'falling') return fallPet(world, pet, dt);
 
     if (pet.kind === 'heisenbug') return updateFish(world, pet, dt);
 
@@ -671,6 +690,162 @@
     }
   }
 
+  // ------------------------------------------------------ picking a pet up
+  /*
+   * A press that never travels is a click: the pet is petted, and a bound one
+   * hands its session to onPetClick. Past DRAG_SLOP the same press is a drag
+   * instead, and the click is cancelled — carrying a pet down the lane and
+   * jumping into its conversation are different intentions, and firing both
+   * would make every drag a navigation you did not ask for.
+   *
+   * That is also why the jump moved to the release. It used to fire the moment
+   * the button went down, which cannot tell the two apart even in principle.
+   */
+  const DRAG_SLOP = 3;        // px of travel before a press becomes a drag
+  const DROP_GRAVITY = 900;   // px/s² on the way back down
+  const THROW_MAX = 520;      // px/s a fling can impart, on either axis
+  const LAND_DUST = 6;
+
+  /*
+   * Nobody enjoys being picked up.
+   *
+   * `squirm` is how hard a pet is fighting the grip right now: all of it the
+   * moment it leaves the floor, settling to a sulk, spiking again whenever it
+   * is swung about and every so often for no reason at all — which is the part
+   * that reads as fear rather than as an animation. `tilt` is the angle that
+   * comes out, and the sprite is drawn turned by it.
+   *
+   * The two waves are not decoration either. One sine at one frequency is a
+   * buzz; a second at an unrelated one is a creature that cannot decide which
+   * way to twist.
+   */
+  const SQUIRM_SETTLE = 0.55;   // per second, down to a sulk
+  const SQUIRM_SULK = 0.22;
+  const SQUIRM_PANIC = 0.9;     // chance per second of remembering to panic
+  const SQUIRM_STYLE = {
+    // a cat twists fast and hard, a dog swings slower and wider, and a fish in
+    // a helmet mostly vibrates
+    cat: { hz: 13, tilt: 0.20, step: 0.055 },
+    dog: { hz: 9, tilt: 0.15, step: 0.075 },
+    fish: { hz: 18, tilt: 0.11, step: 0.05 },
+    stray: { hz: 11, tilt: 0.17, step: 0.06 },
+  };
+
+  function squirmStyle(pet) {
+    if (pet.kind === 'grep') return SQUIRM_STYLE.dog;
+    if (pet.kind === 'heisenbug') return SQUIRM_STYLE.fish;
+    if (pet.custom) return SQUIRM_STYLE.stray;
+    return SQUIRM_STYLE.cat;
+  }
+
+  /* how hard it is struggling this frame, and which way that tips it */
+  function updateSquirm(world, pet, dt, agitation) {
+    const st = squirmStyle(pet);
+    pet.squirm = Math.max(SQUIRM_SULK, pet.squirm - SQUIRM_SETTLE * dt);
+    if (agitation > pet.squirm) pet.squirm = Math.min(1, agitation);
+    if (Math.random() < SQUIRM_PANIC * dt) pet.squirm = 1;
+    const t = world.time * st.hz;
+    pet.tilt = (Math.sin(t) * 0.7 + Math.sin(t * 1.7 + 1) * 0.3) * st.tilt * pet.squirm;
+  }
+
+  /*
+   * How high a pet can be carried: far enough to feel lifted, never far enough
+   * for its own chrome to leave the lane. The nameplate hangs above the sprite
+   * and grows a second line on hover, and the lane is a strip a couple of
+   * hundred pixels tall — a pet held at the ceiling would wear a label clipped
+   * off the top of the screen.
+   */
+  function liftCeiling(world, pet) {
+    const sprite = pet.sprites.walk1.length * pet.scale +
+                   (pet.kind === 'heisenbug' ? FISH_HOVER : 0);
+    return Math.max(0, floorY(world) - sprite - (PLATE_GAP + PLATE_H + LINE_H));
+  }
+
+  /* the pet is in hand now, so whatever it was in the middle of is over */
+  function grabPet(world, pet) {
+    const g = world.grab;
+    // measured here rather than at mousedown: the pet went on walking during
+    // the press, and the point of the grab is that it does not jump on pickup
+    g.dx = world.mouse.x - pet.x;
+    g.dy = (floorY(world) - pet.lift) - world.mouse.y;
+
+    if (world.deadlock && (world.deadlock.a === pet || world.deadlock.b === pet)) {
+      const other = world.deadlock.a === pet ? world.deadlock.b : world.deadlock.a;
+      other.state = 'walk'; other.stateT = rand(1, 3);
+      world.deadlock = null;
+    }
+    if (world.ball.held === pet) { // you picked the dog up. the dog dropped the ball.
+      world.ball.held = null;
+      world.ball.vx = 0;
+      pet.carrying = null;
+    }
+    pet.state = 'held';
+    pet.bob = 0;
+    pet.vx = 0; pet.vy = 0;
+    pet.squirm = 1; // it fights hardest the moment its feet leave the floor
+  }
+
+  /* a held pet tracks the pointer, and remembers how fast it was being moved */
+  function dragPet(world, pet, dt) {
+    const pw = petWidth(pet);
+    const g = world.grab;
+    const nx = clamp(world.mouse.x - g.dx, 6, Math.max(6, world.w - pw - 6));
+    const nlift = clamp(floorY(world) - (world.mouse.y + g.dy), 0, liftCeiling(world, pet));
+
+    if (dt > 0) {
+      // smoothed: one jittery frame should not decide where a fling ends up
+      pet.vx = pet.vx * 0.6 + clamp((nx - pet.x) / dt, -THROW_MAX, THROW_MAX) * 0.4;
+      pet.vy = pet.vy * 0.6 + clamp((pet.lift - nlift) / dt, -THROW_MAX, THROW_MAX) * 0.4;
+    }
+    if (Math.abs(nx - pet.x) > 0.5) {
+      pet.dir = pet.fdir = nx > pet.x ? 1 : -1; // facing wherever it is being pulled
+    }
+    pet.x = nx;
+    pet.lift = nlift;
+    // swing it about and it fights harder, which is the whole reason the throw
+    // speed is tracked at all rather than only sampled at the release
+    updateSquirm(world, pet, dt, (Math.abs(pet.vx) + Math.abs(pet.vy)) / 700);
+  }
+
+  /* let go, and gravity has it back */
+  function fallPet(world, pet, dt) {
+    const pw = petWidth(pet);
+    pet.vy += DROP_GRAVITY * dt;
+    pet.lift -= pet.vy * dt;
+    pet.x = clamp(pet.x + pet.vx * dt, 6, Math.max(6, world.w - pw - 6));
+    pet.vx *= Math.max(0, 1 - 2.4 * dt);
+    updateSquirm(world, pet, dt, 0); // still flailing on the way down
+    if (pet.lift > 0) return;
+
+    pet.lift = 0; pet.vx = 0; pet.vy = 0;
+    pet.squirm = 0; pet.tilt = 0; // back on its feet, and upright again
+    for (let i = 0; i < LAND_DUST; i++) {
+      spawnParticle(world, {
+        x: pet.x + rand(0, pw), y: floorY(world) - 4,
+        rect: true, color: '#7c5433', vx: rand(-50, 50), vy: -rand(20, 60),
+        life: 0.5, size: 2,
+      });
+    }
+    // back on its feet — the fish just floats again, everyone else takes a beat
+    pet.state = pet.kind === 'heisenbug' ? 'swim' : 'sit';
+    pet.stateT = rand(0.5, 1.1);
+  }
+
+  /*
+   * Stop holding whatever is held, and say what it was.
+   *
+   * Called from the release, and from every way a drag can end without one:
+   * the pointer leaving the document, and a pet being taken off screen by its
+   * session ending mid-carry.
+   */
+  function releaseGrab(world) {
+    const g = world.grab;
+    if (!g) return null;
+    world.grab = null;
+    if (g.moved) g.pet.state = 'falling';
+    return g;
+  }
+
   function startDeadlock(world, a, b) {
     world.deadlock = { a, b, t: 3.2 };
     a.state = 'deadlock'; b.state = 'deadlock';
@@ -781,6 +956,30 @@
     ctx.fill();
     ctx.fillStyle = '#ffd75e';
     ctx.fillRect(x + 1.7 * scale, y - 7 * scale, 1.6 * scale, 1.6 * scale);
+  }
+
+  /*
+   * Turn everything drawn until the matching restore() about a point.
+   *
+   * The caller owns that restore, and every caller pairs it in the same
+   * function — an unbalanced save here would not spoil one frame, it would
+   * leave every later frame drawn at an angle, which is why draw() re-applies
+   * the base transform rather than trusting the stack.
+   */
+  function tiltAbout(ctx, angle, px, py) {
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    ctx.translate(-px, -py);
+  }
+
+  /*
+   * A lifted pet's shadow stays on the floor and draws in, which is the only
+   * thing on screen that says how high it is being held — the lane has no
+   * horizon and the sprite alone cannot tell you.
+   */
+  function liftShadow(pet) {
+    return pet.lift > 0 ? Math.max(0.4, 1 - pet.lift / 150) : 1;
   }
 
   // soft glow in the pet's own colour, Crew-style
@@ -936,7 +1135,10 @@
 
     let grid;
     switch (pet.state) {
-      case 'walk': case 'fetch': grid = pet.frame ? pet.sprites.walk2 : pet.sprites.walk1; break;
+      // a carried pet keeps cycling its walk frames, which reads as legs
+      // paddling in the air — exactly what a picked-up cat does
+      case 'walk': case 'fetch': case 'held': case 'falling':
+        grid = pet.frame ? pet.sprites.walk2 : pet.sprites.walk1; break;
       case 'sit': case 'deadlock': grid = pet.sprites.sit || pet.sprites.walk1; break;
       case 'sleep': grid = pet.sprites.sleep || pet.sprites.sit; break;
       case 'loaf': grid = CAT.sleep; break;
@@ -948,8 +1150,14 @@
     }
 
     const h = grid.length * s, w = grid[0].length * s;
-    const y = fy - h + pet.bob;
-    drawShadow(ctx, pet.x + w / 2, fy + 3, w * 0.9, pet.pal[2] || '#666');
+    const y = fy - h - pet.lift + pet.bob;
+    drawShadow(ctx, pet.x + w / 2, fy + 3, w * 0.9 * liftShadow(pet), pet.pal[2] || '#666');
+
+    // a struggling pet is held by the scruff, so that is what it turns about.
+    // Its chrome is not: the nameplate is drawn from spriteTop in a later pass
+    // and stays upright, because a label swinging with the pet is unreadable.
+    const twisting = pet.tilt !== 0;
+    if (twisting) tiltAbout(ctx, pet.tilt, pet.x + w / 2, y + h * 0.25);
 
     if (pet.state === 'glitch') {
       ctx.globalAlpha = 0.5;
@@ -965,6 +1173,8 @@
       const hx = pet.dir === -1 ? pet.x + w * 0.14 : pet.x + w * 0.6;
       drawHat(ctx, hx, y + 0.5 * s, s * 0.9);
     }
+    if (twisting) ctx.restore(); // the hat goes with the head; the label does not
+
     if (pet.state === 'deadlock' && Math.floor(world.time * 2) % 2 === 0) {
       drawLabel(world, pet.x + w / 2, y + h / 2 + 8, '🔒');
     }
@@ -977,16 +1187,22 @@
     const fy = floorY(world);
     const grid = pet.frame ? FISH.swim2 : FISH.swim1;
     const fw = grid[0].length * s, fh = grid.length * s;
-    const hover = 22; // she floats. the helmet is doing its job.
     const x = pet.x;
-    const y = fy - fh - hover + pet.fy;
+    const y = fy - fh - FISH_HOVER - pet.lift + pet.fy;
 
-    drawShadow(ctx, x + fw / 2, fy + 3, fw * 1.1, pet.pal[2]);
+    drawShadow(ctx, x + fw / 2, fy + 3, fw * 1.1 * liftShadow(pet), pet.pal[2]);
 
     ctx.save();
     if (!world.observed) { // upside down, obviously
       ctx.translate(x + fw / 2, y + fh / 2);
       ctx.rotate(Math.PI);
+      ctx.translate(-(x + fw / 2), -(y + fh / 2));
+    }
+    // she has no scruff to be held by, so she thrashes about her middle —
+    // inside the flip, so being carried while unobserved does both
+    if (pet.tilt) {
+      ctx.translate(x + fw / 2, y + fh / 2);
+      ctx.rotate(pet.tilt);
       ctx.translate(-(x + fw / 2), -(y + fh / 2));
     }
     drawGrid(ctx, grid, pet.pal, x, y, s, pet.fdir === -1);
@@ -1164,6 +1380,10 @@
       world.deadlock.a.state = 'walk'; world.deadlock.b.state = 'walk';
       world.deadlock = null;
     }
+    // a session ending mid-carry takes its pet off screen, and a hidden pet is
+    // never updated again: the grab has to end here or the pointer keeps a pet
+    // nobody can see, and the next release would answer for it
+    if (world.grab && world.grab.pet.hidden) releaseGrab(world);
 
     updateDeadlock(world, dt);
     updateBall(world, dt);
@@ -1190,6 +1410,10 @@
 
   function draw(world) {
     const ctx = world.ctx;
+    // The base transform, re-applied rather than assumed. Pets are drawn turned
+    // now, and a save/restore that a throw got between would otherwise leave the
+    // whole lane tilted for good instead of for one frame.
+    ctx.setTransform(world.dpr, 0, 0, world.dpr, 0, 0);
     ctx.clearRect(0, 0, world.w, world.h);
 
     // Resolved before anything is drawn, because a pet's own nameplate is what
@@ -1243,11 +1467,21 @@
 
 
   function hitTest(world, mx, my) {
-    if (my < world.h - 110) return null;
-    for (const p of world.pets) {
+    /*
+     * Backwards, because pets are drawn in array order and two of them do
+     * overlap: the last one drawn is the one on top, and so the one you are
+     * pointing at. Forwards returns the pet *behind* the one you can see, which
+     * a click could get away with and carrying one cannot.
+     */
+    for (let i = world.pets.length - 1; i >= 0; i--) {
+      const p = world.pets[i];
       if (p.hidden) continue;
       const pw = petWidth(p);
-      if (mx > p.x - 6 && mx < p.x + pw + 6) return p;
+      if (mx < p.x - 6 || mx > p.x + pw + 6) continue;
+      // a pet is caught anywhere in the bottom of the lane, and takes that band
+      // up with it when it is carried — otherwise lifting one out of the band
+      // drops it, since the pointer would no longer be over anything
+      if (my >= world.h - 110 - p.lift) return p;
     }
     return null;
   }
@@ -1340,16 +1574,46 @@
       world.mouse.x = e.clientX - r.left;
       world.mouse.y = e.clientY - r.top;
       world.lastMouseMove = performance.now();
-      setHover(!!hitTest(world, world.mouse.x, world.mouse.y));
+
+      const g = world.grab;
+      if (g && !g.moved &&
+          Math.abs(world.mouse.x - g.x0) + Math.abs(world.mouse.y - g.y0) > DRAG_SLOP) {
+        g.moved = true;
+        grabPet(world, g.pet);
+      }
+
+      /*
+       * A drag holds the lane whatever the pointer is over.
+       *
+       * The overlay makes its window click-through the moment nothing is
+       * hovered, and it is the same window the release has to arrive at. Let
+       * hover go false mid-carry — by lifting a pet clear of the pointer, or by
+       * simply holding still for the timeout below — and the mouseup is
+       * delivered to whatever is underneath instead, leaving a pet stuck to the
+       * cursor with no way to put it down.
+       */
+      setHover(!!g || !!hitTest(world, world.mouse.x, world.mouse.y));
       clearTimeout(hoverTimeout);
-      hoverTimeout = setTimeout(() => onLeave(), 2500);
+      if (!g) hoverTimeout = setTimeout(() => onLeave(), 2500);
     }
     function onLeave() {
+      releaseGrab(world); // the pointer is gone, so no release is coming
       world.mouse.x = -9999; world.mouse.y = -9999; world.mouse.active = false;
       setHover(false);
     }
-    function onDown() { world.mouse.active = true; }
-    function onUp() { world.mouse.active = false; }
+    function onDown() {
+      world.mouse.active = true;
+      const pet = hitTest(world, world.mouse.x, world.mouse.y);
+      // a press is only a candidate: what makes it a drag is travelling, and
+      // what makes it a click is not
+      if (pet) world.grab = { pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0 };
+    }
+    function onUp() {
+      world.mouse.active = false;
+      const g = releaseGrab(world);
+      if (g && !g.moved && g.pet.session && opts.onPetClick) opts.onPetClick(g.pet.session);
+      setHover(!!hitTest(world, world.mouse.x, world.mouse.y));
+    }
     window.addEventListener('mousemove', onMove, { passive: true });
     window.addEventListener('mousedown', onDown, { passive: true });
     window.addEventListener('mouseup', onUp, { passive: true });

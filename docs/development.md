@@ -255,6 +255,50 @@ in the lane is painted white.
   decide nobody is watching). Restoring the inline palette takes it from 22 to
   ~7,500.
 
+- **A click is a press that stays put, and a carry has to hold the lane for its
+  whole length.** Picking a pet up and opening its conversation are different
+  intentions, and the jump used to fire on `mousedown`, which cannot separate
+  them even in principle — every drag would also be a navigation. It now fires
+  on the release, and only when the press never travelled `DRAG_SLOP`.
+
+  The rest of it is the click-through window. `main.js` calls
+  `setIgnoreMouseEvents` from `onHoverChange`, so the instant nothing is hovered
+  the lane stops receiving anything — including the `mouseup` that ends a carry,
+  which then goes to whatever application is underneath and leaves a pet stuck
+  to the cursor with nothing on screen that can put it down. Two things would
+  otherwise drop hover mid-carry, and both are handled in `mount()`: lifting a
+  pet clear of the band `hitTest` catches it in (so the band travels with
+  `pet.lift`), and holding still long enough for the 2.5s idle timeout to fire
+  `onLeave` (so it is not armed while `world.grab` is set). Every other way a
+  carry can end without a release — the pointer leaving the document, a session
+  ending and taking its pet off screen — goes through `releaseGrab()`.
+
+  `liftCeiling()` bounds how high a pet goes, and it is not about taste: the
+  nameplate hangs above the sprite and grows a second line on hover, so a pet
+  held near the top of a 190px lane wears a label clipped off the screen.
+
+  A carried pet struggles, which is an envelope (`pet.squirm` — full on pickup,
+  settling to a sulk, spiking when it is swung about and at random) over a pair
+  of waves at unrelated frequencies (`pet.tilt`). One wave is a buzz; two is an
+  animal that cannot decide which way to twist. `hitTest` deliberately ignores
+  all of it — a rotating hitbox makes a pet slippery to hold.
+
+- **The tilt is the lane's only transform, and it must balance.** `tiltAbout()`
+  saves the context and its caller restores it. An unbalanced save is not one
+  spoiled frame: every later frame draws under a rotation that `clearRect` will
+  not remove, and nothing on screen says why. `draw()` re-applies the base
+  transform each frame instead of trusting the stack, and the fake canvas in
+  `test/pets-binding.test.js` counts saves against restores so a missing one
+  fails rather than merely looking odd. The wiggle adds nothing to the sprite
+  cache — rotation is a context transform, not a new bitmap — and that is not
+  incidental: see the cache section above for what a per-frame bitmap costs.
+
+- **`hitTest` walks the pet list backwards.** Pets are drawn in array order, so
+  the last one drawn is on top, and that is the one under the pointer. Searching
+  forwards returns the pet *behind* the visible one. A click could get away with
+  that; a carry cannot, because the wrong animal comes away in your hand and the
+  one you aimed at does not move.
+
 - **Hooks are read at session start.** After `npm run hooks`, already-open
   Claude Code sessions keep the hooks they started with.
 
