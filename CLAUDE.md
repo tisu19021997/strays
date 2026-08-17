@@ -32,7 +32,10 @@ Electron which file to start.
 - Tests:     `npm test` (bare `node --test`; a directory argument does not work)
 - One file:  `node --test desktop/test/rules.test.js`
 - Approvals: `npm run hooks` (`npm run unhook` removes them)
-- Installed: `npx strays`, or `npm i -g strays` — `bin/strays.js` is that entry
+- Installed: `npx claude-strays`, or `npm i -g claude-strays` — `bin/strays.js`
+  is that entry. **The package is `claude-strays`; the command is `strays`.**
+  npm refuses the name `strays` as too close to the existing `stres`, so the two
+  differ on purpose — `test/cli.test.js` pins both, do not "tidy" them together.
 
 ## Adding or customising a pet
 

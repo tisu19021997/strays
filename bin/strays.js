@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /*
- * `npx strays`, and the `strays` command after a global install.
+ * `npx claude-strays`, and the `strays` command after a global install.
+ *
+ * The package is `claude-strays` and the command is `strays`, deliberately:
+ * npm's typosquatting guard refuses the name `strays` as too close to the
+ * existing `stres`. Only the registry name moved; nothing anyone types did.
  *
  * Electron cannot be started by Node directly: requiring the electron package
  * from a plain Node process hands back the path to its binary, and the app is
