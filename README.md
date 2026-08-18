@@ -47,11 +47,17 @@ Want a fifth? [Draw one.](#make-your-own)
 - **Click a pet to go to it.** You land in that pet's conversation, not just
   somewhere in the app — and if you're working in a split layout, clicking won't
   tear it down to a single session.
-- **Pick one up and put it somewhere else.** Drag a pet along the lane and it
-  squirms in your hand like any animal that would rather not be held — the cats
-  twist, Grep swings, Heisenbug just vibrates. Let go and it drops back to the
-  floor. Dragging never opens the conversation; a click is a press that stays
-  put.
+- **Pick one up and carry it anywhere on the screen.** Lift a pet off the floor
+  and it squirms in your hand like any animal that would rather not be held —
+  the cats twist, Grep swings, Heisenbug just vibrates. Take it to the top of
+  the display if you like. Dragging never opens the conversation; a click is a
+  press that stays put.
+- **Then throw it.** Let go while you're moving and the pet arcs off exactly like
+  a thrown ball would — turning over in the air, bouncing off the floor a few
+  times, coming off the walls and the top of the screen, and skidding to a stop.
+  Flick it hard and it crosses the display. Set it down gently and it just lands.
+  How fast your hand was moving *is* the throw, so the same flick throws the same
+  every time.
 - **Say yes without switching windows.** When Claude asks permission for
   something, a little card pops up over the pets. Click Allow and carry on.
 - **Heisenbug keeps the receipts.** Hover her for today's tokens and roughly
@@ -188,6 +194,7 @@ tray:
 | **Follow Claude Code sessions** | Off, and the team just hangs out — no session states, no badges. |
 | **Name the session on each pet** | Off leaves the state badge but drops the name. |
 | **Heisenbug wanders off when you leave** | She teleports across the lane once you've been away from the keyboard a while. Off means she stays put. |
+| **Carry pets anywhere on screen** | On, a pet can be lifted to the top of the display. Off puts the lane back to a strip along the bottom, and pets can only be raised an inch or so. |
 | **Clicking a pet** | Whether landing on a session may rearrange your panes — see below. |
 | **Don't check for updates** | Appears once there's a newer version. Stops the daily version check for good. |
 | **Command approvals** | Turns the Allow / Deny cards on, once the hooks are installed. |
@@ -251,6 +258,7 @@ It started as a birthday gift for Claude. It seemed unfair to keep it.
 | **No Allow / Deny cards** | Expected in `auto` mode. Otherwise check `~/.strays/gate.log`, which records a line and a reason for every call. |
 | **A pet for a session I finished** | It keeps its pet for a while after the turn ends, quietly, then hands it back. |
 | **Shadows on the floor but no pets** | The lane froze mid-frame. `strays restart` brings them back; if it happens again, an issue with roughly how long it had been running is genuinely useful. |
+| **Clicks aren't landing anywhere** | The lane covers the screen so a pet can be carried up it, and it only catches the pointer while you're touching a pet. If that ever sticks it lets go within a couple of seconds by itself. If it doesn't, `strays stop` from a terminal, and **🐾 → Carry pets anywhere on screen** turns the tall lane off. |
 
 `STRAYS_DEBUG=1 strays` logs session states, token usage, presence and
 approval traffic.

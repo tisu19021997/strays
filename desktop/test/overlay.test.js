@@ -77,6 +77,20 @@ globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = () => {};
 
+/*
+ * The clock is the harness's, like the DOM is.
+ *
+ * The renderer keeps a heartbeat running that renews its claim on the pointer
+ * (see pointer-guard.js), and a real interval here would both outlive the file —
+ * a pending timer is a process node:test will wait on for ever — and tick
+ * unbidden in the middle of assertions about what was sent. Held instead, so a
+ * test can beat it deliberately.
+ */
+const beats = [];
+globalThis.setInterval = (fn) => beats.push(fn);
+globalThis.clearInterval = () => {};
+const beat = () => beats.forEach((fn) => fn());
+
 // ---------------------------------------------------------- bridge to main
 const bridge = {
   replies: [], jumps: [], interactive: [], handlers: {},
@@ -142,8 +156,10 @@ function request(over) {
 }
 
 /* deliver a request the way main.js does, and hand back the card it made */
+const liveCards = new Set();
 function send(req) {
   const timers = captureTimers(() => bridge.handlers.request(req));
+  liveCards.add(req.id);
   return { req, card: cardWrap.children[cardWrap.children.length - 1], timers };
 }
 
@@ -164,6 +180,15 @@ function placeSessions(ids, xs) {
 
 test.beforeEach(() => {
   bridge.replies.length = 0;
+  /*
+   * Through the renderer's own removal path, not by pulling the elements out
+   * from under it. Ripping them out leaves overlay.js still believing the
+   * pointer is on a card it no longer has — several of these tests hover a card
+   * and never answer it — so the lane started every later test already
+   * interactive, and an assertion about handing the pointer back could not fail.
+   */
+  liveCards.forEach((id) => bridge.handlers.remove(id));
+  liveCards.clear();
   cardWrap.children.slice().forEach((c) => c.remove());
 });
 
@@ -342,6 +367,30 @@ test('a card still under the pointer keeps the lane interactive', () => {
 
   assert.equal(bridge.interactive[bridge.interactive.length - 1], true,
     'the pointer is still on the second card');
+});
+
+test('the heartbeat carries the current answer, not the one that armed it', () => {
+  /*
+   * The host expires a claim nobody renews, which is the only thing standing
+   * between a renderer that has stopped tracking hover and a screen that takes
+   * no clicks at all. A beat that repeats `true` because it was started while
+   * something was hovered renews a claim that is no longer true — and the case
+   * that produces one is the case above, a card answered under the pointer,
+   * which can never fire its own mouseleave.
+   */
+  placeSessions(['s-one'], [300]);
+  const first = send(request({ session_id: 's-one' }));
+
+  first.card.fire('mouseenter');
+  beat();
+  assert.equal(bridge.interactive[bridge.interactive.length - 1], true,
+    'a live hover is renewed');
+
+  button(first.card, 'Allow').click();
+  bridge.interactive.length = 0;
+  beat();
+  assert.deepEqual(bridge.interactive, [false],
+    'and once the card is gone the beat stops asking for the pointer');
 });
 
 test('a request delivered twice raises only one card', () => {

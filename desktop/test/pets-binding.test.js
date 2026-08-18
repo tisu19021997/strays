@@ -15,6 +15,14 @@ const assert = require('node:assert');
 // ------------------------------------------------------------- minimal DOM
 const LANE_W = 800;
 
+/*
+ * The lane's height is a variable because it is one in the overlay too: there
+ * the window *is* the lane, and `height: 'fill'` measures it rather than being
+ * told a number, so a pet can be carried up the whole screen. Tests that care
+ * go through mountFullScreen().
+ */
+let laneH = 190;
+
 const drawnText = []; // every string the engine paints, so labels are readable
 const drawnFills = []; // and every colour it fills with, so chrome is checkable
 const drawnAngles = []; // and every angle it turns by, so a wiggle is provable
@@ -48,10 +56,11 @@ const stack = { depth: 0, deepest: 0 };
 
 function fakeElement() {
   return {
-    style: {}, width: 0, height: 0, clientWidth: LANE_W, clientHeight: 190,
+    style: {}, width: 0, height: 0, clientWidth: LANE_W,
+    get clientHeight() { return laneH; }, // a getter: the lane can be resized
     setAttribute() {}, appendChild() {}, remove() {},
     addEventListener() {}, removeEventListener() {},
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: LANE_W, height: 190 }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: LANE_W, height: laneH }),
     getContext: () => fakeContext(),
   };
 }
@@ -126,7 +135,17 @@ const session = (id, state) => ({ id, state: state || 'thinking', cwd: '/Users/d
 const bound = (world) => world.pets.map((p) => (p.session ? p.session.id : null));
 const onScreen = (world) => world.pets.filter((p) => !p.hidden);
 const petFor = (world, id) => world.pets.find((p) => p.session && p.session.id === id);
-const centreOf = (pet) => pet.x + (pet.sprites.walk1[0].length * pet.scale) / 2;
+const widthOf = (pet) => pet.sprites.walk1[0].length * pet.scale;
+const centreOf = (pet) => pet.x + widthOf(pet) / 2;
+
+/*
+ * How high the lane lets a pet go, mirroring liftCeiling() — floor, then the
+ * sprite, then the 37px the nameplate needs above it. Duplicated rather than
+ * exported: it is the same arithmetic the carry tests already spell out, and a
+ * test wanting to know where the ceiling is does not justify widening the API.
+ */
+const liftCeilingOf = (world, pet) =>
+  Math.max(0, (world.h - 14) - pet.sprites.walk1.length * pet.scale - 37);
 
 function mountFollowing(t, opts) {
   const world = Strays.mount(Object.assign(
@@ -134,6 +153,23 @@ function mountFollowing(t, opts) {
   Strays.setFollowMode(true);
   t.after(() => Strays.destroy());
   return world;
+}
+
+/*
+ * A lane the size of a display, mounted the way the desktop overlay mounts one.
+ *
+ * The height is the whole point: the ceiling a pet can be carried to, the
+ * distance it then falls, and the room its nameplate needs all have to come out
+ * of the lane's own height rather than a constant written next to them. 1440 is
+ * a real display rather than a round number — free fall over that distance is
+ * what reaches terminal velocity, and a lane that cannot reach it cannot show
+ * that the cap is there.
+ */
+const FULL_LANE_H = 1440;
+function mountFullScreen(t, opts, height = FULL_LANE_H) {
+  laneH = height;
+  t.after(() => { laneH = 190; });
+  return mountFollowing(t, Object.assign({ height: 'fill' }, opts));
 }
 
 const frame = () => Strays.step(1 / 60, 1);
@@ -828,6 +864,457 @@ test('a pet carried off the floor keeps its own label', (t) => {
 
   fire('mouseup', {});
   settle(world, pet);
+});
+
+// ------------------------------------------------------- a lane worth the name
+/*
+ * The overlay's window used to be a 190px strip, so "drag a pet" meant dragging
+ * it about an inch off the floor. The window is now the size of the display and
+ * the lane is measured from it, which only works because every bound in the
+ * carry — the ceiling, the chrome above it, the fall back down — is derived
+ * from floorY rather than written as a number that would need keeping in step.
+ */
+
+test('a full-screen lane measures its window instead of taking a fixed height', (t) => {
+  const world = mountFullScreen(t);
+  assert.equal(world.h, FULL_LANE_H, 'the lane is as tall as the window it was mounted in');
+  // and in a real browser it is the stylesheet that makes that measurement true
+  assert.equal(world.canvas.style.height, '100vh', 'the canvas fills its window');
+});
+
+test('a pet can be carried most of the way up a full-screen lane', (t) => {
+  const world = mountFullScreen(t);
+  Strays.setSessions([session('alpha')]);
+  frame();
+  const pet = petFor(world, 'alpha');
+
+  dragTo(world, pet, centreOf(pet), 0, 8);
+
+  /*
+   * A strip allows about 87px of lift, which is under half of 190. Anything
+   * that reaches past 70% of the lane can only have come from a ceiling that
+   * grew with it.
+   */
+  assert.ok(pet.lift > world.h * 0.7,
+    `carried ${Math.round(pet.lift)}px up a ${world.h}px lane`);
+  // and no higher than its own nameplate, which is drawn from spriteTop
+  assert.ok(pet.spriteTop >= 37,
+    `with room above it for the plate the hover expands (top ${pet.spriteTop})`);
+
+  fire('mouseup', {});
+  settle(world, pet, 600);
+});
+
+test('a celebration falls on the pets, not down the whole display', (t) => {
+  /*
+   * Confetti was spawned just off the top edge of the canvas, which was a few
+   * pixels above the pets' ears while the canvas was a strip. At the size of a
+   * display the same line is a fifteen-second drizzle over everything on screen,
+   * every time a session finishes — and permanently, in party mode.
+   */
+  const world = mountFullScreen(t);
+  frame();
+  Strays.celebrate();
+
+  assert.ok(world.confetti.length > 0, 'there is confetti');
+  const highest = Math.min(...world.confetti.map((c) => c.y));
+  assert.ok(highest > world.h - 300,
+    `it starts over the lane (highest piece at ${Math.round(highest)} of ${world.h})`);
+});
+
+test('a pet dropped from the top of the screen gets all the way down', (t) => {
+  const world = mountFullScreen(t);
+  Strays.setSessions([session('alpha')]);
+  frame();
+  const pet = petFor(world, 'alpha');
+
+  dragTo(world, pet, centreOf(pet), 0, 8);
+  for (let i = 0; i < 6; i++) frame(); // hold still, so the release is not a fling
+  fire('mouseup', {});
+  const seen = untilStill(world, pet);
+
+  assert.equal(pet.state === 'falling', false, 'it stopped falling');
+  assert.equal(pet.lift, 0, 'and got all the way back to the floor');
+  assert.ok(seen.frames < 1200, `in ${seen.frames} frames, not for ever`);
+});
+
+// ------------------------------------------------------------- letting go
+/*
+ * A throw, not a drop.
+ *
+ * Releasing a pet used to hand it back to gravity with whatever velocity the
+ * carry's own smoothing happened to be holding, clamped so low that every flick
+ * came out the same gentle lob, and then it stopped dead wherever it first
+ * touched something. What follows pins the four things that makes it an object
+ * with a mass instead: the throw is the gesture, the floor gives some back, the
+ * walls and ceiling are surfaces rather than clamps, and none of it runs for ever.
+ */
+
+/* throw a pet to (x, y) over `steps` frames — the fewer, the harder the flick */
+function throwTo(world, pet, x, y, steps) {
+  dragTo(world, pet, x, y, steps);
+  fire('mouseup', {});
+  return Math.hypot(pet.vx, pet.vy);
+}
+
+/*
+ * Carry on dragging a pet that is already held, from wherever the pointer is.
+ *
+ * The only way to build up speed in a direction the pet has to travel to get to:
+ * a hard downward flick has to start from high up, and a single sweep from the
+ * floor cannot be both.
+ */
+function dragOn(world, x, y, steps) {
+  const x0 = world.mouse.x, y0 = world.mouse.y;
+  for (let i = 1; i <= steps; i++) {
+    fire('mousemove', {
+      clientX: x0 + ((x - x0) * i) / steps,
+      clientY: y0 + ((y - y0) * i) / steps,
+    });
+    frame();
+  }
+}
+
+/* run until it stops moving, and say what it did on the way */
+function untilStill(world, pet, cap = 1200) {
+  const seen = {
+    frames: 0, peakLift: pet.lift, liftAfterFloor: 0, touched: false,
+    maxTilt: 0, tiltBeforeRest: 0,
+  };
+  for (let i = 0; i < cap && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    seen.frames++;
+    seen.peakLift = Math.max(seen.peakLift, pet.lift);
+    seen.maxTilt = Math.max(seen.maxTilt, Math.abs(pet.tilt));
+    // the last frame it was still in flight, so the angle it is about to land at
+    // is readable rather than already reset
+    if (pet.state === 'falling') seen.tiltBeforeRest = Math.abs(pet.tilt);
+    if (pet.lift <= 0) seen.touched = true;
+    else if (seen.touched) seen.liftAfterFloor = Math.max(seen.liftAfterFloor, pet.lift);
+  }
+  return seen;
+}
+
+test('the same gesture throws the same, however long you have been dragging', (t) => {
+  /*
+   * This is what measuring the window buys over smoothing the whole carry, and
+   * it is the difference the test above cannot see.
+   *
+   * An exponential average of the carry is still larger for a fast drag than a
+   * slow one, so it looks right. What it is not is a function of the *gesture*:
+   * it converges on the true speed over about five frames, so the same flick let
+   * go of after three frames and after twelve gives two different throws. Which
+   * means a throw you cannot repeat, for a reason invisible on screen.
+   *
+   * 8px a frame either way — well under the cap, because a saturated throw would
+   * hide the whole effect.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  pet.x = 100;
+  const brief = throwTo(world, pet, centreOf(pet) + 24, world.h - 5, 3);
+  settle(world, pet, 1200);
+
+  pet.x = 100;
+  const sustained = throwTo(world, pet, centreOf(pet) + 96, world.h - 5, 12);
+  settle(world, pet, 1200);
+
+  assert.ok(Math.abs(brief - sustained) / sustained < 0.1,
+    `the same 8px a frame either way (${Math.round(brief)} vs ${Math.round(sustained)}px/s)`);
+});
+
+test('a harder flick throws harder', (t) => {
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  const target = pet.x + 500;
+
+  const flick = throwTo(world, pet, target, world.h - 200, 3);
+  settle(world, pet, 1200);
+
+  pet.x = 100;
+  const nudge = throwTo(world, pet, 600, world.h - 200, 200);
+
+  assert.ok(flick > nudge * 3,
+    `a flick throws harder than a slow drag over the same distance (${Math.round(flick)} vs ${Math.round(nudge)}px/s)`);
+  settle(world, pet, 1200);
+});
+
+test('a diagonal throw is not the strongest throw in the lane', (t) => {
+  // clamping each axis separately lets a corner fling out at √2 times the limit,
+  // so the hardest throw available would be a diagonal one
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  pet.x = 200;
+  const flat = throwTo(world, pet, 1400, world.h - 5, 3);
+  settle(world, pet, 1200);
+
+  pet.x = 200;
+  const corner = throwTo(world, pet, 1400, world.h - 1000, 3);
+  settle(world, pet, 1200);
+
+  assert.ok(corner <= flat + 1,
+    `the cap is a speed, not a pair of them (${Math.round(corner)} vs ${Math.round(flat)}px/s)`);
+});
+
+test("a throw arcs the way a thrown ball arcs", (t) => {
+  /*
+   * A parabola is two statements, and only two: the horizontal speed does not
+   * change, and the vertical speed changes by the same amount every frame.
+   *
+   * Both had something in the way. Horizontal drag in flight breaks the first —
+   * the pet stalls forward, the arc leans, and it comes down steeper than it went
+   * up, which is a falling leaf rather than a thrown ball. Terminal velocity
+   * breaks the second, flattening the descent into a straight line exactly where
+   * the curve should be at its steepest.
+   *
+   * Sampled over one free flight, and only while it really is free: touching the
+   * floor, a wall or the ceiling all end the sample, because all three are meant
+   * to bend the curve. Doing that by tuning the throw to miss them instead makes
+   * the test fail for the wrong reason the moment anyone touches gravity.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, 2160);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 60;
+
+  throwTo(world, pet, 130, world.h - 300, 12);
+
+  const wall = world.w - widthOf(pet) - 6;
+  const xs = [], lifts = [];
+  for (let i = 0; i < 400; i++) {
+    frame();
+    if (pet.lift <= 0) break;                                   // the floor
+    if (pet.x <= 6.001 || pet.x >= wall - 0.001) break;          // a wall
+    if (pet.lift >= liftCeilingOf(world, pet) - 0.001) break;    // the ceiling
+    xs.push(pet.x);
+    lifts.push(pet.lift);
+  }
+
+  assert.ok(lifts.length > 40, `a flight worth measuring (${lifts.length} frames)`);
+  assert.ok(Math.max(...lifts) > 500, 'that actually went up');
+
+  const diff = (a) => a.slice(1).map((v, i) => v - a[i]);
+  const dx = diff(xs);
+  const d2lift = diff(diff(lifts));
+
+  // constant horizontal speed
+  const spread = Math.max(...dx) - Math.min(...dx);
+  assert.ok(spread < 1e-9,
+    `the horizontal speed never changes (${spread.toExponential(2)}px of drift per frame)`);
+  assert.ok(dx[0] > 1, 'and there was some to keep');
+
+  // constant downward acceleration, all the way to the floor
+  const accel = Math.max(...d2lift) - Math.min(...d2lift);
+  assert.ok(accel < 1e-9,
+    `gravity is the same every frame (${accel.toExponential(2)}px/frame² of variation)`);
+  assert.ok(d2lift[0] < 0, 'and it pulls down');
+
+  // and the steepest part of it is fast enough that a cap would have shown up
+  const fastest = Math.max(...diff(lifts).map((d) => -d)) * 60;
+  assert.ok(fastest > 1500, `it was really moving by the end (${Math.round(fastest)}px/s)`);
+});
+
+test('a throw comes back down while you are still watching it', (t) => {
+  /*
+   * The shape of a parabola is set by the launch angle, so the test above holds
+   * at any gravity at all — which leaves the one thing gravity actually decides
+   * unpinned: how big the arc is. At 900 a hard 45° throw hung for three seconds
+   * and ranged further than the screen it was thrown across, so nearly every
+   * throw ended against a wall and none of them looked thrown. This is a floor
+   * under that, not a tuning fork: it fails for a value that is wrong, not for
+   * one that is merely different.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  pet.x = 60;
+
+  // up and along in equal measure — the throw that stays in the air longest
+  throwTo(world, pet, centreOf(pet) + 300, world.h - 300, 3);
+
+  let frames = 0;
+  while (frames < 400 && pet.lift > 0) { frame(); frames++; }
+
+  assert.ok(pet.lift <= 0, 'it came down');
+  assert.ok(frames < 120,
+    `and inside two seconds (${frames} frames, ${(frames / 60).toFixed(2)}s)`);
+});
+
+test('nothing falls so fast that its own frames stop touching', (t) => {
+  /*
+   * The one place the curve gives way, and it is a backstop rather than physics.
+   * A built-in sprite is 40px tall, so past 2400px/s successive frames do not
+   * overlap at all and a fall reads as a jump cut. A normal throw never gets
+   * there; a hard downward flick from the top of a tall display does.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, 2160);
+  frame();
+  const pet = world.pets[0];
+
+  // up slowly, so the climb is not itself a throw, then flicked hard downward
+  dragTo(world, pet, centreOf(pet), 100, 60);
+  dragOn(world, centreOf(pet), 400, 3);
+  fire('mouseup', {});
+
+  let fastest = 0;
+  for (let i = 0; i < 900 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    fastest = Math.max(fastest, pet.vy);
+  }
+
+  assert.ok(fastest <= 2400, `held to a sprite height a frame (${Math.round(fastest)}px/s)`);
+  assert.ok(fastest > 2399, `and it really did reach the cap (${Math.round(fastest)}px/s)`);
+  assert.equal(pet.lift, 0, 'and it landed');
+});
+
+test('a thrown pet bounces, and stops bouncing', (t) => {
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  throwTo(world, pet, pet.x + 40, 200, 4);
+  const seen = untilStill(world, pet);
+
+  assert.ok(seen.touched, 'it reached the floor');
+  assert.ok(seen.liftAfterFloor > 20,
+    `and came back off it (${Math.round(seen.liftAfterFloor)}px)`);
+  assert.equal(pet.state === 'falling', false, 'and it did settle');
+  assert.equal(pet.lift, 0, 'on the floor');
+  assert.ok(seen.frames < 1200, `in ${seen.frames} frames, not for ever`);
+});
+
+test('each bounce is smaller than the one before it', (t) => {
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  throwTo(world, pet, pet.x + 40, 200, 4);
+
+  // the peak of each hop, in order
+  const peaks = [];
+  let rising = 0;
+  for (let i = 0; i < 1200 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    const before = pet.lift;
+    frame();
+    if (pet.lift > before) rising = Math.max(rising, pet.lift);
+    else if (rising) { peaks.push(rising); rising = 0; }
+  }
+
+  assert.ok(peaks.length >= 2, `it hopped more than once (${peaks.length} hops)`);
+  for (let i = 1; i < peaks.length; i++) {
+    assert.ok(peaks[i] < peaks[i - 1],
+      `hop ${i + 1} (${Math.round(peaks[i])}px) is lower than hop ${i} (${Math.round(peaks[i - 1])}px)`);
+  }
+});
+
+test('a pet thrown level along the floor skids instead of stopping dead', (t) => {
+  /*
+   * A level throw never earns an impact worth bouncing, so it lands on the frame
+   * it was released. Without friction on the floor that is a pet standing exactly
+   * where it was let go, which is the one throw that looked like a bug.
+   *
+   * Measured as distance covered rather than where it ended up: a hard throw
+   * crosses the whole test lane and comes back off the far wall, so the finishing
+   * position can be behind the release point having travelled twice its length.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  pet.x = 100;
+
+  throwTo(world, pet, 700, world.h - 5, 3);
+  let travelled = 0, last = pet.x;
+  for (let i = 0; i < 1200 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    travelled += Math.abs(pet.x - last);
+    last = pet.x;
+  }
+
+  assert.ok(travelled > 300, `it carried on (${Math.round(travelled)}px past the release)`);
+  assert.equal(pet.state === 'falling', false, 'and friction stopped it');
+});
+
+test('a pet thrown at a wall comes off it', (t) => {
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  // from the left, so the throw itself is never up against the clamp that stops
+  // a carried pet leaving the lane — you cannot wind up through a wall
+  pet.x = 100;
+
+  throwTo(world, pet, 600, world.h - 600, 3);
+  const wall = world.w - widthOf(pet) - 6;
+  let hitWall = false, cameBack = 0;
+  for (let i = 0; i < 900 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    if (pet.x >= wall) hitWall = true;
+    else if (hitWall) cameBack = Math.max(cameBack, wall - pet.x);
+  }
+
+  assert.ok(hitWall, 'it reached the wall');
+  assert.ok(cameBack > 20, `and came back off it (${Math.round(cameBack)}px)`);
+});
+
+test('a pet thrown at the ceiling stays in the lane', (t) => {
+  /*
+   * liftCeiling bounds a *carry*. A throw is not a carry, and 1800px/s upward is
+   * two metres of rise — off the top of the screen, wearing a nameplate that is
+   * not on it either.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  throwTo(world, pet, pet.x, -2000, 3);
+  const seen = untilStill(world, pet);
+
+  assert.ok(seen.peakLift <= world.h, `it never left the lane (peaked at ${Math.round(seen.peakLift)} of ${world.h})`);
+  assert.ok(seen.peakLift > world.h * 0.5, 'and it really was thrown upward');
+  assert.equal(pet.lift, 0, 'and it came back down');
+});
+
+test('a hard throw turns the pet over, and it lands upright', (t) => {
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  pet.x = 100;
+
+  throwTo(world, pet, 700, 300, 3);
+  const spun = untilStill(world, pet);
+
+  // the flail of being carried is about a fifth of a radian; a tumble is not
+  assert.ok(spun.maxTilt > 0.5, `it turned over (${spun.maxTilt.toFixed(2)} rad)`);
+  assert.ok(spun.maxTilt < Math.PI / 2 + 0.3,
+    `without going past its own side (${spun.maxTilt.toFixed(2)} rad)`);
+  /*
+   * And it rights itself on the way, rather than being snapped upright on the
+   * frame it lands. An angle that only ever accumulates has to be zeroed at the
+   * end, and that is a visible pop out of nowhere on every single throw.
+   */
+  assert.ok(spun.tiltBeforeRest < 0.35,
+    `nearly upright before it lands (${spun.tiltBeforeRest.toFixed(2)} rad)`);
+  assert.equal(pet.tilt, 0, 'and upright once it stops');
+  assert.equal(pet.tumble, 0, 'with nothing left over to tilt the next frame');
+});
+
+test('a pet set down gently barely turns at all', (t) => {
+  // the mirror of the above: the tumble has to answer to the throw, or every
+  // release is the same somersault
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+
+  withoutLuck(() => {
+    throwTo(world, pet, pet.x + 2, world.h - 300, 200);
+    const dropped = untilStill(world, pet);
+    assert.ok(dropped.maxTilt < 0.5,
+      `set down, not thrown (${dropped.maxTilt.toFixed(2)} rad)`);
+  });
 });
 
 // --------------------------------------------------------- being carried off

@@ -136,6 +136,63 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   half: a pet held higher than the lane wears a nameplate clipped off the top of
   the screen.
 
+- **The lane is the window, and the window is now the whole display.** A pet can
+  be carried to the top of the screen, which works only because every bound in
+  the carry is measured down from `floorY` — `liftCeiling`, the chrome above the
+  sprite, `hitTest`'s band — so nothing needed a second constant kept in step.
+  `height: 'fill'` makes `mount()` *measure* its window instead of being told a
+  number, so a resolution change or a dock appearing resizes the lane on its own.
+  Two things follow. `FALL_MAX` caps the drop: free fall from 800px arrives at
+  ~1200px/s, which crosses the sprite's own height in a frame and a half and
+  reads as a dropped stone. And **`setIgnoreMouseEvents` stopped being a small
+  promise** — a claim that is never withdrawn used to cost the bottom inch of the
+  screen and now costs every click on the machine, including the one that would
+  reach the tray to quit. So it is a lease, not a switch: a beat that **always
+  runs** carries the renderer's current answer, and `pointer-guard.js` drops the
+  claim when renewals stop — which turns a crashed, wedged or merely buggy
+  renderer into two seconds of a stiff desktop that then fixes itself. The beat
+  is unconditional on purpose. One armed and disarmed alongside hover is a thing
+  that can be left armed, and a card answered under the pointer never fires its
+  own `mouseleave` — that alone would renew a stale claim for ever, which is the
+  failure the lease exists to prevent. Do not shorten the lease to
+  "tighten" it — hover dropping mid-carry sends the `mouseup` underneath and the
+  pet sticks to the cursor, which is the failure below, not a smaller one.
+  `laneHeight` in `~/.strays/config.json` puts the 190px strip back.
+
+- **A release is a throw, and the throw is the gesture rather than a frame.**
+  `throwFrom()` measures the displacement across the last `THROW_WINDOW` of
+  pointer history over that window's own duration. The carry's smoothed `pet.vx`
+  is deliberately *not* used: it is an exponential average that converges over
+  about five frames, so the same flick let go of after three frames and after
+  twelve gives two different throws — a throw you cannot repeat, for a reason
+  nothing on screen explains. It also fools a test into passing, because a
+  smoothed average is still bigger for a fast drag than a slow one; the property
+  that separates them is *"the same gesture throws the same"*, not *"a flick
+  throws harder"*. The cap is a **speed**, not a per-axis clamp — clamped per axis
+  the hardest throw available is a diagonal one, at √2 times the limit.
+  **The flight is a parabola, and that is two statements: horizontal speed never
+  changes, vertical speed changes by the same amount every frame.** So there is
+  deliberately **no horizontal drag in flight** — drag makes the pet stall
+  forward and the arc lean, which is a falling leaf, not a ball. `FALL_MAX` is
+  the only thing allowed to bend it, and it is a backstop, not physics: a
+  built-in sprite is 40px tall, so past 2400px/s successive frames stop
+  overlapping and a fall reads as a jump cut. A normal throw never reaches it.
+  `DROP_GRAVITY` is what sets how *big* the arc is, and the parabola property
+  holds at any value — so the size is pinned by its own test (a hard 45° throw is
+  back down inside two seconds). At 900 it hung for three seconds and outranged
+  the screen, so every throw died against a wall.
+  Then the flight has to end. Floor bounces at `BOUNCE` terminate on
+  `BOUNCE_MIN` (halving converges only in the limit); the walls and the ceiling
+  *reflect* rather than clamp, and the ceiling is not optional — 1800px/s upward
+  leaves the screen, nameplate and all. Out of bounces is not the same as
+  stopped: a level throw never earns a bounce, so without the `SLIDE_MIN` skid
+  every throw across the lane ended with the pet standing exactly where it was
+  let go. And the tumble is a **leaky** integrator pulled back to upright, capped
+  at `TUMBLE_MAX`: an angle that only accumulates has to be snapped upright on the
+  frame it lands, which is a visible pop on every throw, and pixel art rotated far
+  off-axis is stair-steps. The tumble costs nothing in the sprite cache — it is a
+  `rotate` — and it must stay that way.
+
 - **A carried pet is drawn turned, and that is the lane's only transform.**
   `tiltAbout()` saves the context and the caller restores it; leave that
   unbalanced and it is not one bad frame, it is every later frame drawn at an

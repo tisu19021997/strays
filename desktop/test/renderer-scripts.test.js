@@ -61,6 +61,8 @@ function browserGlobals() {
     cancelAnimationFrame: noop,
     setTimeout: () => 0,
     clearTimeout: noop,
+    setInterval: () => 0,
+    clearInterval: noop,
     Image: function Image() { return element(); },
   };
   globals.window = globals;

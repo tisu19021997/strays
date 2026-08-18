@@ -20,6 +20,7 @@ desktop/permissions.js  would Claude Code prompt? (pure — the heart of it)
 desktop/settings.js     finds and merges Claude Code's permission rules
 desktop/requests.js     how long an approval request still means anything
 desktop/sessions.js     where a pet click should land (pure)
+desktop/pointer-guard.js who holds the pointer, and for how long (pure)
 desktop/usage.js        Heisenbug's token and cost tracker
 desktop/update.js       is there a newer strays? (the only network call there is)
 desktop/hooks/gate.js            the PreToolUse approval gate
@@ -353,13 +354,146 @@ in the lane is painted white.
 
   `liftCeiling()` bounds how high a pet goes, and it is not about taste: the
   nameplate hangs above the sprite and grows a second line on hover, so a pet
-  held near the top of a 190px lane wears a label clipped off the screen.
+  held at the very top of the lane wears a label clipped off the screen.
+
+- **The lane is its window, and the window is the display.** Dragging a pet
+  around a 190px strip is dragging it an inch off the floor, so the overlay's
+  window now covers the primary display's work area and a pet can be carried to
+  the top of the screen. Almost none of the engine had to change for that,
+  because every bound in a carry is measured down from `floorY` — `liftCeiling`,
+  the chrome above the sprite, the band `hitTest` catches a pet in — and
+  `floorY` is the bottom of the canvas. The one new mechanism is `height: 'fill'`
+  in `mount()`, which *measures* the window rather than being told a number, so
+  the lane follows a resolution change, a dock appearing, or the tray putting the
+  strip back. `laneHeight` in `~/.strays/config.json` takes a pixel count for
+  anyone who would rather the overlay did not cover the screen.
+
+  Three things did have to change, and all of them are about scale rather than
+  geometry — the pattern to look for when the lane grows is code that was
+  written against the *top* edge of a canvas that used to be a few pixels above
+  the pets' ears.
+
+  `confettiTop()` is the plainest case. Confetti was spawned just off the top of
+  the canvas and falls at 30–130px/s, which is a brisk burst over a 190px strip
+  and a fifteen-second drizzle over an entire display — every time a session
+  finishes, and permanently while party mode is on. It now falls `CONFETTI_FALL`
+  onto the pets whatever the lane is doing, which leaves the strip and the
+  browser build bit-for-bit as they were.
+
+  `FALL_MAX` caps the drop. Free fall from ~800px arrives at about 1200px/s,
+  which crosses the sprite's own height in a frame and a half: the pet stops
+  reading as an animal landing and reads as a dropped stone, past its own dust
+  before the dust is drawn. The cap sits above anything a 190px strip could reach
+  (~480px/s from its ceiling), so the old lane cannot tell it is there.
+
+  **And the click-through flag stopped being a small promise.** While the lane
+  was a strip, a claim the renderer never withdrew cost the bottom inch of the
+  screen — strange, survivable, and obvious. At the size of a display the same
+  claim swallows every click on the machine, including the ones that would reach
+  the menu bar to quit strays, so the only way out is a terminal you can no
+  longer click on. `pointer-guard.js` makes a claim a **lease**: a 500ms beat in
+  the renderer carries whether anything on the lane is under the cursor, and the
+  host drops the claim when renewals stop. Every way the renderer can go quiet —
+  crashed, wedged in a loop, or buggy enough never to say `false` — becomes at
+  most `HOLD_MS` of a stiff desktop that then fixes itself, and
+  `render-process-gone`, `unresponsive` and hiding the lane short-circuit even
+  that.
+
+  **The beat always runs, and carries the current answer rather than a hardcoded
+  `true`.** One armed and disarmed alongside the hover state is a thing that can
+  be left armed, and the case that leaves it armed already exists: a card
+  answered under the pointer can never fire its own `mouseleave`. That is the bug
+  `removeCard` was written for, and an armed beat would have renewed the claim it
+  clears — forever, over the whole screen. Being wrong now costs one beat.
+
+  The same residue is why `overlay.test.js` empties its cards through
+  `onApprovalRemove` rather than removing the elements: pulling them out leaves
+  the renderer believing the pointer is on a card it no longer has, so the lane
+  started every later test already interactive and an assertion about handing the
+  pointer back could not fail.
+
+  **Do not shorten the lease to "tighten" it.** The two failures are not
+  symmetrical but neither is small: never expiring costs the whole screen, and
+  expiring while a claim is still live drops hover mid-carry, which sends the
+  `mouseup` to the application underneath and sticks the pet to the cursor. Two
+  seconds is four missed beats of slack. `set()` also applies only on a change,
+  so the heartbeat is not a native call twice a second.
 
   A carried pet struggles, which is an envelope (`pet.squirm` — full on pickup,
   settling to a sulk, spiking when it is swung about and at random) over a pair
   of waves at unrelated frequencies (`pet.tilt`). One wave is a buzz; two is an
   animal that cannot decide which way to twist. `hitTest` deliberately ignores
   all of it — a rotating hitbox makes a pet slippery to hold.
+
+- **Letting go is a throw, and the throw is the gesture, not a frame.**
+  `throwFrom()` takes the displacement across the last `THROW_WINDOW` of pointer
+  history over that window's own duration. The obvious alternative is the
+  velocity the carry is already smoothing, and it is wrong in a way that hides:
+  an exponential average converges over about five frames, so the *same* flick
+  released after three frames and after twelve produces two different throws.
+  The gesture is repeatable and the result is not, and nothing on screen says why.
+
+  That distinction also caught a bad test. "A flick throws harder than a slow
+  drag" passes under the smoothed implementation too — a converging average is
+  still larger for a fast drag. The property that actually separates them is
+  *"the same gesture throws the same, however long you have been dragging"*, and
+  only after writing that did the mutant die. Both tests are kept; only one of
+  them was ever load-bearing.
+
+  The cap is a **speed**, not a clamp per axis. Clamped per axis, the hardest
+  throw in the lane is a diagonal one at √2 times the limit — a limit that only
+  applies to people who throw in straight lines.
+
+  **The flight itself is a parabola, which is two statements and only two:** the
+  horizontal speed does not change, and the vertical speed changes by the same
+  amount every frame. Both had something in the way.
+
+  There is now deliberately **no horizontal drag in flight**. Drag breaks the
+  first statement — the pet stalls forward, the arc leans, and it comes down
+  steeper than it went up, which reads as a falling leaf rather than a thrown
+  ball. Over a few hundred pixels at these speeds real drag is invisible anyway.
+  Friction on the *floor* is visible, and that is `GROUND_DRAG`, which is a
+  different thing in a different place.
+
+  `DROP_GRAVITY` is the other half, and with the throw speed capped it is the
+  only thing deciding how *big* an arc is. At 900 a hard 45° throw hung for three
+  seconds and ranged about 3600px — further than the display it was thrown
+  across, so nearly every throw ended against a wall, slowly. 2000 puts it at
+  about 1600px and 1.3s, and it visibly bends instead of drifting.
+
+  Worth knowing when tuning it: **the parabola property holds at any gravity**,
+  because the shape of the curve is set by the launch angle. So the test for the
+  curve cannot see a bad gravity value at all — the arc's *size* needed its own
+  assertion, and it is deliberately a floor ("back down inside two seconds")
+  rather than a tuning fork.
+
+  Then the flight has to end, in four different ways:
+
+  - **Floor.** `BOUNCE` of the impact comes back up, and `BOUNCE_MIN` is what
+    terminates it. Halving converges only in the limit, and a pet that never
+    quite settles is a pet that never gets back to walking.
+  - **Walls and ceiling reflect** rather than clamp. The old `clamp` on `pet.x`
+    silently ate the whole throw. The ceiling is not decoration either:
+    `liftCeiling` bounds a *carry*, and 1800px/s upward is well past the top of a
+    display, so a thrown pet left the screen with its nameplate.
+  - **Out of bounces is not stopped.** A level throw never earns an impact worth
+    bouncing, so it lands on the frame it was released — without the `SLIDE_MIN`
+    skid, every throw along the lane ended with the pet standing exactly where it
+    was let go, which is the one case that read as a bug rather than as physics.
+  - **`FALL_MAX`** is terminal velocity, and it is about legibility rather than
+    realism: past it a pet crosses its own height in under two frames and is gone
+    before its dust is drawn.
+
+  **The tumble is a leaky integrator, not an accumulating angle.** `pet.spin`
+  comes off the release speed and drives `pet.tumble`, which is pulled back
+  towards upright every frame (`TUMBLE_RETURN`) and capped (`TUMBLE_MAX`). Two
+  reasons, and neither is taste. An angle that only accumulates has to be zeroed
+  on the frame the pet lands, which is a visible pop out of nowhere on every
+  single throw; and pixel art rotated far off its axis is a mess of stair-steps.
+  A pet that rights itself on the way down has neither problem — and a cat
+  righting itself is not exactly unobservable behaviour. It adds nothing to the
+  sprite cache, because it is a `rotate` and not a new bitmap; see the cache
+  section above for what breaking that costs.
 
 - **The tilt is the lane's only transform, and it must balance.** `tiltAbout()`
   saves the context and its caller restores it. An unbalanced save is not one

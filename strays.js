@@ -438,7 +438,8 @@
       state: 'walk', stateT: rand(1, 3),
       speed: 26, scale: world.opts.scale,
       frame: 0, frameT: 0, bob: 0,
-      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0,   // held or falling; see grabPet()
+      // held, thrown or falling; see grabPet(), throwFrom() and fallPet()
+      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0, spin: 0, tumble: 0,
       name: kind, hat: world.opts.party,
       session: null,
     };
@@ -468,7 +469,9 @@
       speed: def.speed || 28,
       scale: def.scale || world.opts.scale,
       frame: 0, frameT: 0, bob: 0,
-      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0,
+      // the same carry state the built-ins get, and for the same reason: a pet
+      // adopted from the editor is picked up and thrown exactly like the others
+      lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0, spin: 0, tumble: 0,
       hat: world.opts.party,
       pal: def.palette,
       phrases: def.phrases || [],
@@ -482,6 +485,19 @@
   }
 
   const floorY = (world) => world.h - 14;
+
+  /*
+   * Where a celebration starts, which is not the top of the canvas.
+   *
+   * Confetti used to be spawned just off the top edge because the canvas was a
+   * strip and the top edge was a few pixels above the pets' ears. On a lane the
+   * size of a display that same line rains down the whole screen at 60px/s — a
+   * fifteen-second drizzle over everything you are working on, every time a
+   * session finishes, and permanently while party mode is on. So it falls a
+   * strip's worth onto the pets whatever the lane is doing.
+   */
+  const CONFETTI_FALL = 200;
+  const confettiTop = (world) => Math.max(0, floorY(world) - CONFETTI_FALL);
 
   // how far above the floor Heisenbug hovers. The helmet is doing its job.
   const FISH_HOVER = 22;
@@ -702,9 +718,105 @@
    * the button went down, which cannot tell the two apart even in principle.
    */
   const DRAG_SLOP = 3;        // px of travel before a press becomes a drag
-  const DROP_GRAVITY = 900;   // px/s² on the way back down
-  const THROW_MAX = 520;      // px/s a fling can impart, on either axis
+
+  /*
+   * Gravity, and it is doing more than pulling things down: with the throw speed
+   * capped, gravity alone decides how big a thrown pet's arc is.
+   *
+   * At 900 a hard 45° throw ranged about 3600px and took a second and a half to
+   * come down — bigger than the screen it was thrown across, so nearly every
+   * throw ended against a wall, and slowly. 2000 puts that arc at about 1600px
+   * and 1.3s: it crosses a good part of a display, and it visibly *bends*
+   * instead of drifting.
+   */
+  const DROP_GRAVITY = 2000;  // px/s²
+
+  /*
+   * Letting go of a pet is a throw, and a throw is measured, not sampled.
+   *
+   * The velocity carried during a carry is a heavily smoothed thing, because
+   * what it feeds is how hard the pet is struggling — one jittery frame must not
+   * decide that. A release wants the opposite: the speed of the gesture that
+   * just happened. So the last THROW_WINDOW of pointer positions is kept, and
+   * the throw is the displacement across that window over its own duration.
+   *
+   * Sampling the final frame instead makes the same flick land differently
+   * depending on which frame the button happened to come up on, and smoothing
+   * across the whole carry makes every flick come out the same gentle lob.
+   */
+  const THROW_WINDOW = 0.09;  // s of pointer history a release is measured over
+  const THROW_MAX = 1800;     // px/s, as a speed rather than per-axis
+
+  /*
+   * The one place the curve is allowed to stop being a curve, and it is a
+   * backstop rather than part of the flight.
+   *
+   * A built-in sprite is 10 rows at scale 4, so 40px tall, and 40px a frame at
+   * 60fps is 2400px/s. Past that a falling pet's frames no longer overlap at
+   * all — successive positions do not touch, and it reads as a jump cut rather
+   * than as a fall. So the number is a sprite height per frame, not a taste.
+   *
+   * A normal throw never reaches it. Free fall from the ceiling of a 1440px
+   * display arrives at about 2310px/s, just under; what does reach it is a hard
+   * downward flick, or any drop on a display tall enough (a 4K panel gets to
+   * ~2870px/s unaided). Those are exactly the cases where the alternative is a
+   * pet that teleports into the floor.
+   */
+  const FALL_MAX = 2400;
+
+  /*
+   * ...and what happens when it arrives. A pet that stops dead on the floor is
+   * a sprite whose y stopped changing; one that bounces is an object with a
+   * mass. BOUNCE_MIN is what makes it terminate — 0.5 per bounce converges on
+   * its own, but only in the limit, and a pet settling for ever is a pet that
+   * never gets back to walking.
+   */
+  const BOUNCE = 0.5;         // of the impact speed comes back up
+  const BOUNCE_MIN = 90;      // px/s: slower than this and it is done bouncing
+  const WALL_BOUNCE = 0.6;    // the lane's sides are springier than its floor
+  const FLOOR_GRIP = 0.75;    // horizontal speed kept through a floor bounce
+
+  /*
+   * There is deliberately no horizontal drag in flight. A parabola is two
+   * statements — the horizontal speed does not change, and the vertical one
+   * changes by the same amount every frame — and drag breaks the first: the pet
+   * stalls forward, the arc leans, and the descent comes down steeper than the
+   * climb went up. That is a leaf, not a ball. Drag over a few hundred pixels at
+   * these speeds is not something anyone can see anyway; friction on the *floor*
+   * is, and that is GROUND_DRAG below.
+   */
+
+  /*
+   * ...and done bouncing is not the same as stopped. A pet thrown level along
+   * the floor never gets an impact worth bouncing, so without this it lands on
+   * the frame it was released and every throw across the lane came out as a
+   * pet standing exactly where it was let go. It skids instead, and friction is
+   * what stops it.
+   */
+  const GROUND_DRAG = 3.0;    // per second, on the floor: friction, not air
+  const SLIDE_MIN = 60;       // px/s: slower than this and it has come to rest
   const LAND_DUST = 6;
+
+  /*
+   * A thrown pet turns, because a thrown thing does. The spin comes off the
+   * horizontal speed — flung to the right, it rolls to the right — and drives an
+   * angle that is always being pulled back towards upright.
+   *
+   * That pull is what makes it a tumble rather than a spin, and it is doing two
+   * jobs. Pixel art rotated far off the axis is a mess of stair-steps, and a
+   * sprite whose angle only ever accumulates has to be snapped upright the
+   * instant it lands — a visible pop out of nowhere, on every throw. A pet that
+   * rights itself has neither problem, and a cat righting itself is not exactly
+   * unobservable behaviour.
+   *
+   * It costs nothing in the sprite cache: this is a rotate, not a new bitmap.
+   * Keep it that way — see spriteBitmap().
+   */
+  const SPIN_PER_SPEED = 0.0035; // rad/s per px/s of release speed
+  const SPIN_MAX = 6;            // rad/s
+  const SPIN_DRAG = 0.9;         // per second
+  const TUMBLE_RETURN = 3.5;     // per second, back towards upright
+  const TUMBLE_MAX = 1.2;        // rad: hard over, never past its own side
 
   /*
    * Nobody enjoys being picked up.
@@ -749,11 +861,14 @@
   }
 
   /*
-   * How high a pet can be carried: far enough to feel lifted, never far enough
-   * for its own chrome to leave the lane. The nameplate hangs above the sprite
-   * and grows a second line on hover, and the lane is a strip a couple of
-   * hundred pixels tall — a pet held at the ceiling would wear a label clipped
-   * off the top of the screen.
+   * How high a pet can be carried: as high as the lane goes, and never so high
+   * that its own chrome leaves it. The nameplate hangs above the sprite and
+   * grows a second line on hover, so a pet held at the very top would wear a
+   * label clipped off the screen.
+   *
+   * Everything here is measured down from floorY, so this scales with the lane
+   * on its own — a 190px strip allows about 80px of lift and a full-screen lane
+   * allows all but the top ~80px, with no constant to keep in step.
    */
   function liftCeiling(world, pet) {
     const sprite = pet.sprites.walk1.length * pet.scale +
@@ -782,10 +897,12 @@
     pet.state = 'held';
     pet.bob = 0;
     pet.vx = 0; pet.vy = 0;
+    // catching a pet mid-tumble stops the tumble: it is in a hand now
+    pet.spin = 0; pet.tumble = 0;
     pet.squirm = 1; // it fights hardest the moment its feet leave the floor
   }
 
-  /* a held pet tracks the pointer, and remembers how fast it was being moved */
+  /* a held pet tracks the pointer, and remembers how it was being moved */
   function dragPet(world, pet, dt) {
     const pw = petWidth(pet);
     const g = world.grab;
@@ -793,7 +910,9 @@
     const nlift = clamp(floorY(world) - (world.mouse.y + g.dy), 0, liftCeiling(world, pet));
 
     if (dt > 0) {
-      // smoothed: one jittery frame should not decide where a fling ends up
+      // smoothed, because what this feeds is how hard the pet is struggling and
+      // one jittery frame must not decide that. The throw is measured separately
+      // from the history below — see throwFrom().
       pet.vx = pet.vx * 0.6 + clamp((nx - pet.x) / dt, -THROW_MAX, THROW_MAX) * 0.4;
       pet.vy = pet.vy * 0.6 + clamp((pet.lift - nlift) / dt, -THROW_MAX, THROW_MAX) * 0.4;
     }
@@ -802,33 +921,113 @@
     }
     pet.x = nx;
     pet.lift = nlift;
-    // swing it about and it fights harder, which is the whole reason the throw
+
+    // where the pointer has been, for the throw. Trimmed to the window rather
+    // than to a count, so it means the same thing at any frame rate.
+    g.hist.push({ x: nx, lift: nlift, t: world.time });
+    while (g.hist.length > 2 && world.time - g.hist[0].t > THROW_WINDOW) g.hist.shift();
+
+    // swing it about and it fights harder, which is the whole reason the carry
     // speed is tracked at all rather than only sampled at the release
     updateSquirm(world, pet, dt, (Math.abs(pet.vx) + Math.abs(pet.vy)) / 700);
   }
 
-  /* let go, and gravity has it back */
+  /*
+   * The throw: the gesture that just happened, not the frame it ended on.
+   *
+   * Displacement across the kept window over that window's own duration, capped
+   * as a *speed* rather than per axis — a per-axis cap lets a diagonal fling out
+   * at √2 times the limit, so the hardest throw in the lane is a corner one.
+   */
+  function throwFrom(world, pet, g) {
+    const a = g.hist[0], b = g.hist[g.hist.length - 1];
+    const span = a && b ? b.t - a.t : 0;
+    if (!span) { pet.vx = 0; pet.vy = 0; pet.spin = 0; return; }
+
+    let vx = (b.x - a.x) / span;
+    let vy = (a.lift - b.lift) / span; // lift is up, vy is down
+    const speed = Math.hypot(vx, vy);
+    if (speed > THROW_MAX) { vx *= THROW_MAX / speed; vy *= THROW_MAX / speed; }
+
+    pet.vx = vx;
+    pet.vy = vy;
+    // thrown to the right, rolls to the right: canvas y is down, so clockwise
+    // is a positive angle
+    pet.spin = clamp(vx * SPIN_PER_SPEED, -SPIN_MAX, SPIN_MAX);
+  }
+
+  /* let go, and it is an object with a mass until it stops moving */
   function fallPet(world, pet, dt) {
     const pw = petWidth(pet);
-    pet.vy += DROP_GRAVITY * dt;
+    pet.vy = Math.min(pet.vy + DROP_GRAVITY * dt, FALL_MAX);
     pet.lift -= pet.vy * dt;
-    pet.x = clamp(pet.x + pet.vx * dt, 6, Math.max(6, world.w - pw - 6));
-    pet.vx *= Math.max(0, 1 - 2.4 * dt);
+    pet.x += pet.vx * dt; // and no drag on it: see the note by WALL_BOUNCE
+
+    // the sides of the lane, which a thrown pet comes off rather than stopping
+    // dead against — the old clamp silently ate the whole throw
+    const right = Math.max(6, world.w - pw - 6);
+    if (pet.x < 6) { pet.x = 6; pet.vx = Math.abs(pet.vx) * WALL_BOUNCE; }
+    else if (pet.x > right) { pet.x = right; pet.vx = -Math.abs(pet.vx) * WALL_BOUNCE; }
+
+    // and the top of it. Thrown hard upward a pet would otherwise leave the lane
+    // entirely — off the screen on the desktop, wearing a nameplate that is not
+    // on it either.
+    const ceiling = liftCeiling(world, pet);
+    if (pet.lift > ceiling) { pet.lift = ceiling; pet.vy = Math.abs(pet.vy) * BOUNCE; }
+
+    pet.spin *= Math.max(0, 1 - SPIN_DRAG * dt);
+    pet.tumble = clamp((pet.tumble + pet.spin * dt) * Math.max(0, 1 - TUMBLE_RETURN * dt),
+      -TUMBLE_MAX, TUMBLE_MAX);
     updateSquirm(world, pet, dt, 0); // still flailing on the way down
+    pet.tilt += pet.tumble;          // ...and turning over, if it was thrown
+
     if (pet.lift > 0) return;
 
-    pet.lift = 0; pet.vx = 0; pet.vy = 0;
-    pet.squirm = 0; pet.tilt = 0; // back on its feet, and upright again
-    for (let i = 0; i < LAND_DUST; i++) {
-      spawnParticle(world, {
-        x: pet.x + rand(0, pw), y: floorY(world) - 4,
-        rect: true, color: '#7c5433', vx: rand(-50, 50), vy: -rand(20, 60),
-        life: 0.5, size: 2,
-      });
+    const impact = pet.vy;
+    pet.lift = 0;
+
+    /*
+     * A bounce, while there is enough left in it to be one. BOUNCE_MIN is what
+     * ends this: halving converges only in the limit, and a pet that never quite
+     * settles is a pet that never gets back to walking.
+     */
+    if (impact > BOUNCE_MIN) {
+      pet.vy = -impact * BOUNCE;
+      pet.vx *= FLOOR_GRIP;
+      pet.spin *= FLOOR_GRIP;
+      landDust(world, pet, impact);
+      return;
     }
+    pet.vy = 0;
+
+    // out of bounces but not out of speed: it skids, still rolling, and the
+    // floor is what takes the rest of the throw off it
+    if (Math.abs(pet.vx) > SLIDE_MIN) {
+      pet.vx *= Math.max(0, 1 - GROUND_DRAG * dt);
+      if (Math.random() < 0.25) landDust(world, pet, 0);
+      return;
+    }
+
+    pet.vx = 0; pet.spin = 0;
+    pet.squirm = 0; pet.tilt = 0; pet.tumble = 0; // back on its feet, and upright
+    landDust(world, pet, impact);
     // back on its feet — the fish just floats again, everyone else takes a beat
     pet.state = pet.kind === 'heisenbug' ? 'swim' : 'sit';
     pet.stateT = rand(0.5, 1.1);
+  }
+
+  /* the puff a landing kicks up, as much of it as the landing earned */
+  function landDust(world, pet, impact) {
+    const pw = petWidth(pet);
+    const force = clamp(impact / 600, 0.3, 2);
+    for (let i = 0; i < Math.round(LAND_DUST * force); i++) {
+      spawnParticle(world, {
+        x: pet.x + rand(0, pw), y: floorY(world) - 4,
+        rect: true, color: '#7c5433',
+        vx: rand(-50, 50) * force, vy: -rand(20, 60) * force,
+        life: 0.5, size: 2,
+      });
+    }
   }
 
   /*
@@ -836,13 +1035,17 @@
    *
    * Called from the release, and from every way a drag can end without one:
    * the pointer leaving the document, and a pet being taken off screen by its
-   * session ending mid-carry.
+   * session ending mid-carry. All of them are throws — the pointer was moving,
+   * and where it went is not this function's business.
    */
   function releaseGrab(world) {
     const g = world.grab;
     if (!g) return null;
     world.grab = null;
-    if (g.moved) g.pet.state = 'falling';
+    if (g.moved) {
+      throwFrom(world, g.pet, g);
+      g.pet.state = 'falling';
+    }
     return g;
   }
 
@@ -1153,11 +1356,19 @@
     const y = fy - h - pet.lift + pet.bob;
     drawShadow(ctx, pet.x + w / 2, fy + 3, w * 0.9 * liftShadow(pet), pet.pal[2] || '#666');
 
-    // a struggling pet is held by the scruff, so that is what it turns about.
-    // Its chrome is not: the nameplate is drawn from spriteTop in a later pass
-    // and stays upright, because a label swinging with the pet is unreadable.
+    /*
+     * A struggling pet is held by the scruff, so that is what it turns about.
+     * A thrown one is not held by anything, so it turns about its middle, which
+     * is the difference between a pet twisting in a hand and a pet tumbling
+     * through the air.
+     *
+     * Its chrome does neither: the nameplate is drawn from spriteTop in a later
+     * pass and stays upright, because a label swinging with the pet is
+     * unreadable.
+     */
     const twisting = pet.tilt !== 0;
-    if (twisting) tiltAbout(ctx, pet.tilt, pet.x + w / 2, y + h * 0.25);
+    const pivot = pet.state === 'falling' ? y + h / 2 : y + h * 0.25;
+    if (twisting) tiltAbout(ctx, pet.tilt, pet.x + w / 2, pivot);
 
     if (pet.state === 'glitch') {
       ctx.globalAlpha = 0.5;
@@ -1396,7 +1607,7 @@
 
     if (world.opts.party && world.confetti.length < 80 && Math.random() < 0.3) {
       world.confetti.push({
-        x: rand(0, world.w), y: -10, vy: rand(30, 80), vx: rand(-20, 20),
+        x: rand(0, world.w), y: confettiTop(world) - 10, vy: rand(30, 80), vx: rand(-20, 20),
         color: pick(['#ff5f9e', '#ffd75e', '#57c7ff', '#7ddb63', '#b06bff']),
         rot: rand(0, 6), vr: rand(-3, 3), age: 0,
       });
@@ -1505,6 +1716,8 @@
   // ----------------------------------------------------------------- mount
   function mount(userOpts) {
     const opts = Object.assign({
+      // px, or 'fill' for the whole window — which is what the desktop overlay
+      // wants, because there the window *is* the lane
       height: 170,
       scale: 4,
       pets: ['segfault', 'grep', 'mutex', 'heisenbug'],
@@ -1522,7 +1735,8 @@
     canvas.setAttribute('data-strays', '');
     Object.assign(canvas.style, {
       position: 'fixed', left: '0', bottom: '0', width: '100vw',
-      height: opts.height + 'px', zIndex: String(opts.zIndex),
+      height: opts.height === 'fill' ? '100vh' : opts.height + 'px',
+      zIndex: String(opts.zIndex),
       pointerEvents: 'none', imageRendering: 'pixelated',
     });
     opts.parent.appendChild(canvas);
@@ -1546,7 +1760,14 @@
       const oldW = world.w;
       world.dpr = Math.min(2, window.devicePixelRatio || 1);
       world.w = canvas.clientWidth || window.innerWidth;
-      world.h = opts.height;
+      // 'fill' is measured rather than fixed, so the lane follows its window:
+      // the overlay's is the size of a display, and a display can change size
+      // under it (a resolution change, the dock appearing, a second monitor
+      // arriving). floorY is the bottom of the canvas and lift is measured from
+      // floorY, so the pets stay on the floor through it without bookkeeping.
+      world.h = opts.height === 'fill'
+        ? (canvas.clientHeight || window.innerHeight)
+        : opts.height;
       canvas.width = world.w * world.dpr;
       canvas.height = world.h * world.dpr;
       world.ctx.setTransform(world.dpr, 0, 0, world.dpr, 0, 0);
@@ -1606,7 +1827,13 @@
       const pet = hitTest(world, world.mouse.x, world.mouse.y);
       // a press is only a candidate: what makes it a drag is travelling, and
       // what makes it a click is not
-      if (pet) world.grab = { pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0 };
+      // hist is where the pointer has been, which is what the release is
+      // measured from rather than the frame it happens to land on
+      if (pet) {
+        world.grab = {
+          pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0, hist: [],
+        };
+      }
     }
     function onUp() {
       world.mouse.active = false;
@@ -1685,7 +1912,7 @@
       if (!w) return;
       for (let i = 0; i < 60; i++) {
         w.confetti.push({
-          x: rand(0, w.w), y: rand(-40, -5), vy: rand(60, 130), vx: rand(-30, 30),
+          x: rand(0, w.w), y: confettiTop(w) + rand(-40, -5), vy: rand(60, 130), vx: rand(-30, 30),
           color: pick(['#ff5f9e', '#ffd75e', '#57c7ff', '#7ddb63', '#b06bff']),
           rot: rand(0, 6), vr: rand(-4, 4), age: 0,
         });

@@ -21,8 +21,22 @@ const { UsageTracker } = require('./usage');
 const { resolveJumpTarget, loadDesktopIndex, readSessionHost } = require('./sessions');
 const { Approvals } = require('./approvals');
 const { checkForUpdate } = require('./update');
+const { PointerGuard } = require('./pointer-guard');
 
-const LANE_HEIGHT = 190;
+/*
+ * How much of the screen the lane covers.
+ *
+ * The pets walk along the bottom either way — floorY is the bottom of the
+ * canvas — so this is really "how far up can a pet be carried". Full height by
+ * default, because a lane you cannot lift a pet out of is a strange thing to
+ * hand someone a drag gesture for. `laneHeight` in ~/.strays/config.json takes a
+ * number of pixels for anyone who would rather the overlay did not cover the
+ * screen; STRIP_HEIGHT is what it was before, and what the tray writes.
+ */
+const STRIP_HEIGHT = 190;
+
+/* the renderer renews its claim on this beat, well inside the guard's lease */
+const POINTER_SWEEP_MS = 500;
 
 /*
  * Untouched for this long and you have actually left, so Heisenbug may wander.
@@ -59,6 +73,16 @@ let aliveTimer = null;
 const debug = (...a) => process.env.STRAYS_DEBUG && console.log(...a);
 
 /*
+ * The lane covers the screen, so the click-through flag is now the difference
+ * between a desk toy and a machine that will not take a click anywhere.
+ */
+const pointer = new PointerGuard({
+  apply: (interactive) => {
+    if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!interactive, { forward: true });
+  },
+});
+
+/*
  * Everything about which requests deserve a card, and where a click goes, lives
  * in approvals.js — this file only carries them between there and the renderer.
  */
@@ -71,13 +95,28 @@ const approvals = new Approvals({
   debug,
 });
 
-function createWindow() {
+/*
+ * The lane, in screen coordinates: the full width of the primary display, and
+ * as much of its height as the lane is allowed. Always anchored to the bottom,
+ * because that is where the floor is.
+ */
+function laneBounds() {
   const { workArea } = screen.getPrimaryDisplay();
-  win = new BrowserWindow({
+  const want = readConfig().laneHeight;
+  const height = typeof want === 'number' && want > 0
+    ? Math.min(want, workArea.height)
+    : workArea.height;
+  return {
     x: workArea.x,
-    y: workArea.y + workArea.height - LANE_HEIGHT,
+    y: workArea.y + workArea.height - height,
     width: workArea.width,
-    height: LANE_HEIGHT,
+    height,
+  };
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    ...laneBounds(),
     transparent: true,
     frame: false,
     resizable: false,
@@ -99,6 +138,18 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // clicks fall through to whatever is underneath; forwarded moves keep hover working
   win.setIgnoreMouseEvents(true, { forward: true });
+
+  /*
+   * Every way the renderer can stop renewing its claim without saying so. The
+   * lease covers all of them within a couple of seconds, but a crash is knowable
+   * immediately and a screen that takes clicks again immediately is worth the
+   * three lines.
+   */
+  win.webContents.on('render-process-gone', () => pointer.release());
+  win.on('unresponsive', () => pointer.release());
+  win.on('hide', () => pointer.release());
+  // and none of them need an undo: the renderer's next heartbeat re-claims
+
   win.loadFile(path.join(__dirname, 'overlay.html'));
 
   if (process.env.STRAYS_DEBUG) {
@@ -122,13 +173,9 @@ function createWindow() {
 
 function positionWindow() {
   if (!win) return;
-  const { workArea } = screen.getPrimaryDisplay();
-  win.setBounds({
-    x: workArea.x,
-    y: workArea.y + workArea.height - LANE_HEIGHT,
-    width: workArea.width,
-    height: LANE_HEIGHT,
-  });
+  // the renderer measures the lane rather than being told it, so resizing the
+  // window is the whole of changing its height — see `height: 'fill'`
+  win.setBounds(laneBounds());
 }
 
 // ------------------------------------------------------------------- tray
@@ -183,6 +230,15 @@ function rebuildTrayMenu() {
       type: 'checkbox',
       checked: mischief,
       click: (item) => { mischief = item.checked; send('show-mischief', mischief); },
+    },
+    {
+      label: 'Carry pets anywhere on screen',
+      type: 'checkbox',
+      checked: typeof readConfig().laneHeight !== 'number',
+      click: (item) => {
+        writeConfig({ laneHeight: item.checked ? 'full' : STRIP_HEIGHT });
+        positionWindow();
+      },
     },
     {
       label: 'Clicking a pet',
@@ -424,10 +480,11 @@ app.whenReady().then(() => {
     }, 2000);
   }
 
-  // hovering a pet or a card -> catch clicks; leaving -> click-through again
-  ipcMain.on('set-interactive', (_e, interactive) => {
-    if (win) win.setIgnoreMouseEvents(!interactive, { forward: true });
-  });
+  // hovering a pet or a card -> catch clicks; leaving -> click-through again.
+  // The renderer repeats this while it wants the pointer; see pointer-guard.js
+  // for why it is a lease rather than a switch.
+  ipcMain.on('set-interactive', (_e, interactive) => pointer.claim(interactive));
+  setInterval(() => pointer.sweep(), POINTER_SWEEP_MS).unref();
 
   ipcMain.on('approval-reply', (_e, { id, decision }) => {
     debug('[approval] reply', id, decision);

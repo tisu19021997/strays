@@ -2,11 +2,27 @@
 
 let cardHover = false;
 let petHover = false;
-const syncInteractive = () =>
-  window.petsBridge.setInteractive(cardHover || petHover);
+
+/*
+ * Asking for the pointer is a lease the host expires, not a switch it flips —
+ * see pointer-guard.js. The lane covers the screen, so a claim the host keeps
+ * honouring after this renderer has stopped tracking hover is every click on
+ * the machine; renewing it says "still here, and still true".
+ *
+ * One beat that always runs, rather than one armed and disarmed alongside the
+ * hover state. An interval that has to be cancelled is a thing that can be left
+ * armed — a card answered under the pointer never fires its own mouseleave, and
+ * that alone would have renewed a stale claim for ever, which is the failure
+ * the lease exists to prevent. This one carries the current answer instead of a
+ * hardcoded `true`, so being wrong costs at most one beat.
+ */
+const RENEW_MS = 500;
+const syncInteractive = () => window.petsBridge.setInteractive(cardHover || petHover);
+setInterval(syncInteractive, RENEW_MS);
 
 const world = Strays.mount({
-  height: 190,
+  // the window is the lane, whatever size the host has made it
+  height: 'fill',
   onHoverChange: (hovering) => { petHover = hovering; syncInteractive(); },
   onPetClick: (session) => window.petsBridge.jumpToSession(session),
 });
