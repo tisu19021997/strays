@@ -52,12 +52,13 @@ Want a fifth? [Draw one.](#make-your-own)
   the cats twist, Grep swings, Heisenbug just vibrates. Take it to the top of
   the display if you like. Dragging never opens the conversation; a click is a
   press that stays put.
-- **Then throw it.** Let go while you're moving and the pet arcs off exactly like
-  a thrown ball would — turning over in the air, bouncing off the floor a few
-  times, coming off the walls and the top of the screen, and skidding to a stop.
-  Flick it hard and it crosses the display. Set it down gently and it just lands.
-  How fast your hand was moving *is* the throw, so the same flick throws the same
-  every time.
+- **Then throw it.** Let go while you're moving and the pet keeps going — it
+  carries the momentum of your hand, arcing off like a thrown ball, turning over
+  in the air, skipping off the floor, coming off the walls and the top of the
+  screen, and sliding to a stop. Sweep it across and it travels; flick it hard and
+  it crosses the display. Stop first and it just drops at your cursor. How fast
+  your hand was moving *is* the throw, so the same flick throws the same every
+  time.
 - **Say yes without switching windows.** When Claude asks permission for
   something, a little card pops up over the pets. Click Allow and carry on.
 - **Heisenbug keeps the receipts.** Hover her for today's tokens and roughly

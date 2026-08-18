@@ -774,7 +774,13 @@
   const BOUNCE = 0.5;         // of the impact speed comes back up
   const BOUNCE_MIN = 90;      // px/s: slower than this and it is done bouncing
   const WALL_BOUNCE = 0.6;    // the lane's sides are springier than its floor
-  const FLOOR_GRIP = 0.75;    // horizontal speed kept through a floor bounce
+  /*
+   * A bounce is the floor pushing *up*. It barely touches how fast the thing is
+   * already travelling sideways, which is what lets a thrown ball skip on and on
+   * across a room. At 0.75 a pet lost a quarter of its forward speed to every
+   * hop — four hops and three quarters of the throw was gone into nothing.
+   */
+  const FLOOR_GRIP = 0.92;    // horizontal speed kept through a floor bounce
 
   /*
    * There is deliberately no horizontal drag in flight. A parabola is two
@@ -793,8 +799,22 @@
    * pet standing exactly where it was let go. It skids instead, and friction is
    * what stops it.
    */
-  const GROUND_DRAG = 3.0;    // per second, on the floor: friction, not air
-  const SLIDE_MIN = 60;       // px/s: slower than this and it has come to rest
+  /*
+   * Friction is a constant deceleration, not a proportion of the speed.
+   *
+   * This was `vx *= (1 - 3.0 * dt)`, and both halves of that were wrong. The
+   * rate was far too strong — swept along the floor at an ordinary 600px/s a pet
+   * carried 181px, about two and a half of its own body lengths, which reads as
+   * stopping dead rather than as momentum. And a proportional decay is the wrong
+   * curve: it takes most of the speed off immediately and then crawls towards
+   * zero for ever, so what you see is a lurch and then a long drift, where
+   * sliding friction should be an even slowing to a definite stop.
+   *
+   * 450px/s² is about a metre of carry from a brisk sweep: 600px/s runs 400px
+   * and stops in a third of a second over one.
+   */
+  const GROUND_FRICTION = 450; // px/s², taken off horizontal speed on the floor
+  const SLIDE_MIN = 30;        // px/s: slower than this and it has come to rest
   const LAND_DUST = 6;
 
   /*
@@ -1001,9 +1021,10 @@
     pet.vy = 0;
 
     // out of bounces but not out of speed: it skids, still rolling, and the
-    // floor is what takes the rest of the throw off it
+    // floor takes the rest of the throw off it at a steady rate
     if (Math.abs(pet.vx) > SLIDE_MIN) {
-      pet.vx *= Math.max(0, 1 - GROUND_DRAG * dt);
+      const shed = GROUND_FRICTION * dt;
+      pet.vx = Math.abs(pet.vx) <= shed ? 0 : pet.vx - Math.sign(pet.vx) * shed;
       if (Math.random() < 0.25) landDust(world, pet, 0);
       return;
     }

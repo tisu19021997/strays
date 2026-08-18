@@ -187,7 +187,23 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   leaves the screen, nameplate and all. Out of bounces is not the same as
   stopped: a level throw never earns a bounce, so without the `SLIDE_MIN` skid
   every throw across the lane ended with the pet standing exactly where it was
-  let go. And the tumble is a **leaky** integrator pulled back to upright, capped
+  let go.
+  **Friction on the floor is a constant deceleration (`GROUND_FRICTION`), not a
+  proportion of the speed.** It was `vx *= (1 - 3.0·dt)`, and both halves were
+  wrong: far too strong, and the wrong curve — a proportional decay sheds most of
+  the speed at once and then crawls towards zero, so what you saw was a lurch and
+  a drift where sliding should be an even slowing to a definite stop. And
+  `FLOOR_GRIP` is 0.92, not 0.75: a bounce is the floor pushing *up*, so it
+  barely touches sideways speed — that is what lets a ball skip on across a room,
+  and at 0.75 four hops threw away three quarters of the throw.
+  **Tune these against a hand, not against the cap.** The bug was invisible for a
+  release because the test flicked hard enough to saturate `THROW_MAX`: at
+  1800px/s the pet carried 582px and looked fine, while an ordinary 600px/s sweep
+  carried 181px — under three body lengths, which reads as stopping dead. The
+  distances are quadratic in release speed, so the top of the range tells you
+  almost nothing about the middle of it. Assert in body lengths at a stated
+  speed well clear of the cap.
+  And the tumble is a **leaky** integrator pulled back to upright, capped
   at `TUMBLE_MAX`: an angle that only accumulates has to be snapped upright on the
   frame it lands, which is a visible pop on every throw, and pixel art rotated far
   off-axis is stair-steps. The tumble costs nothing in the sprite cache — it is a

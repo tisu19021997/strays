@@ -13,7 +13,13 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 // ------------------------------------------------------------- minimal DOM
-const LANE_W = 800;
+/*
+ * The lane's width, mutable for the same reason its height is: on the desktop
+ * both come from the display. A test measuring how far a thrown pet travels has
+ * to be able to ask for a lane it will not cross, or WALL_BOUNCE takes 40% of
+ * the speed and the measurement is really about the walls.
+ */
+let laneW = 800;
 
 /*
  * The lane's height is a variable because it is one in the overlay too: there
@@ -56,11 +62,12 @@ const stack = { depth: 0, deepest: 0 };
 
 function fakeElement() {
   return {
-    style: {}, width: 0, height: 0, clientWidth: LANE_W,
+    style: {}, width: 0, height: 0,
+    get clientWidth() { return laneW; },
     get clientHeight() { return laneH; }, // a getter: the lane can be resized
     setAttribute() {}, appendChild() {}, remove() {},
     addEventListener() {}, removeEventListener() {},
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: LANE_W, height: laneH }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: laneW, height: laneH }),
     getContext: () => fakeContext(),
   };
 }
@@ -90,7 +97,7 @@ globalThis.document = Object.assign({
   createElement: fakeElement,
 }, listenTo);
 globalThis.window = Object.assign({
-  innerWidth: LANE_W, innerHeight: 900, devicePixelRatio: 1,
+  get innerWidth() { return laneW; }, innerHeight: 900, devicePixelRatio: 1,
 }, listenTo);
 const fire = (type, ev) => (listeners.get(type) || []).slice().forEach((fn) => fn(ev || {}));
 globalThis.localStorage = { getItem: () => null, setItem() {} };
@@ -166,9 +173,10 @@ function mountFollowing(t, opts) {
  * that the cap is there.
  */
 const FULL_LANE_H = 1440;
-function mountFullScreen(t, opts, height = FULL_LANE_H) {
+function mountFullScreen(t, opts, height = FULL_LANE_H, width = laneW) {
   laneH = height;
-  t.after(() => { laneH = 190; });
+  laneW = width;
+  t.after(() => { laneH = 190; laneW = 800; });
   return mountFollowing(t, Object.assign({ height: 'fill' }, opts));
 }
 
@@ -1210,6 +1218,97 @@ test('each bounce is smaller than the one before it', (t) => {
     assert.ok(peaks[i] < peaks[i - 1],
       `hop ${i + 1} (${Math.round(peaks[i])}px) is lower than hop ${i} (${Math.round(peaks[i - 1])}px)`);
   }
+});
+
+test('a pet swept along the floor at a hand\'s pace keeps its momentum', (t) => {
+  /*
+   * The gesture people actually make, and the one the test below could not see.
+   *
+   * That one flicks hard enough to saturate THROW_MAX at 1800px/s, which carried
+   * 582px and passed. An ordinary sweep is more like 600px/s — and that carried
+   * 181px, under three of the pet's own body lengths, which does not read as
+   * momentum at all. It read as the pet stopping dead the moment it was let go,
+   * because the friction was both far too strong and the wrong curve: a
+   * proportional decay takes most of the speed off at once and then crawls.
+   *
+   * So this pins the ordinary case in the pet's own units, and does it at a speed
+   * chosen to be well clear of the cap.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  pet.x = 60;
+
+  // 400px in 40 frames is 600px/s: brisk, unremarkable, nowhere near the cap
+  const speed = throwTo(world, pet, centreOf(pet) + 400, world.h - 5, 40);
+  assert.ok(speed > 500 && speed < 700, `an ordinary sweep (${Math.round(speed)}px/s)`);
+
+  // distance covered, not where it ended up: the test lane is 800px wide, so a
+  // real sweep reaches the far side and comes back off it
+  let carried = 0, last = pet.x;
+  for (let i = 0; i < 1200 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    carried += Math.abs(pet.x - last);
+    last = pet.x;
+  }
+
+  assert.ok(carried > widthOf(pet) * 5,
+    `it carried on (${Math.round(carried)}px, ${(carried / widthOf(pet)).toFixed(1)} body lengths)`);
+});
+
+test('a bounce carries a pet on rather than stopping it', (t) => {
+  /*
+   * A bounce is the floor pushing *up*, so it should barely touch how fast the
+   * pet is already travelling sideways — that is what lets a thrown ball skip on
+   * and on across a room instead of arriving and dying. At FLOOR_GRIP 0.75 a
+   * quarter of the forward speed went into each hop and a thrown pet spent most
+   * of its travel before its first contact.
+   *
+   * Measured as ground covered before the first touch against ground covered
+   * after it, which needs no absolute distance and so does not have to be
+   * retuned alongside gravity or the friction. In a lane wide enough that it
+   * never reaches a side — a wall takes 40% of the forward speed, and this is
+   * not a test about walls.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 60;
+
+  dragTo(world, pet, centreOf(pet), world.h - 400, 30);   // up, slowly
+  dragOn(world, world.mouse.x + 400, world.mouse.y, 40);  // then across, ~600px/s
+  fire('mouseup', {});
+
+  let before = 0, after = 0, touched = false, last = pet.x;
+  for (let i = 0; i < 1200 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    const step = Math.abs(pet.x - last);
+    last = pet.x;
+    if (touched) after += step; else before += step;
+    if (pet.lift <= 0) touched = true;
+  }
+
+  assert.ok(before > 100, `it flew before it landed (${Math.round(before)}px)`);
+  assert.ok(after > before * 1.5,
+    `and the bouncing carried it further still (${Math.round(before)}px flying, ${Math.round(after)}px after)`);
+});
+
+test('and a pet set down without moving does not slide at all', (t) => {
+  // the other half of it: momentum has to come from the gesture, or a pet put
+  // down carefully wanders off across the floor on its own
+  const world = mountFullScreen(t, { pets: ['segfault'] });
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  dragTo(world, pet, centreOf(pet), world.h - 200, 30); // straight up, then hold
+  for (let i = 0; i < 12; i++) frame();
+  fire('mouseup', {});
+  const from = pet.x;
+  settle(world, pet, 1200);
+
+  assert.ok(Math.abs(pet.x - from) < 12,
+    `it went straight down (${Math.round(pet.x - from)}px sideways)`);
 });
 
 test('a pet thrown level along the floor skids instead of stopping dead', (t) => {

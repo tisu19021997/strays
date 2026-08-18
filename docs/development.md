@@ -480,9 +480,45 @@ in the lane is painted white.
     bouncing, so it lands on the frame it was released — without the `SLIDE_MIN`
     skid, every throw along the lane ended with the pet standing exactly where it
     was let go, which is the one case that read as a bug rather than as physics.
+  - **Friction is a constant deceleration, and a bounce hardly touches sideways
+    speed.** `GROUND_FRICTION` is px/s² rather than a proportion, and
+    `FLOOR_GRIP` is 0.92. See below — this was wrong twice.
   - **`FALL_MAX`** is terminal velocity, and it is about legibility rather than
     realism: past it a pet crosses its own height in under two frames and is gone
     before its dust is drawn.
+
+  **Momentum, and the reason it took three goes.** The report was that dragging a
+  pet left to right and letting go dropped it more or less vertically instead of
+  carrying it on. Both mechanisms that decide that were wrong:
+
+  - **Sliding friction was `vx *= (1 - 3.0 · dt)`** — a proportion of the current
+    speed. Wrong rate and wrong curve. Real sliding friction is a constant
+    deceleration, so it slows evenly to a definite stop; a proportional decay
+    sheds most of the speed in the first fraction of a second and then crawls
+    towards zero, which looks like a lurch followed by a drift. It is now
+    `GROUND_FRICTION` in px/s².
+  - **`FLOOR_GRIP` was 0.75**, so a quarter of the forward speed went into every
+    hop. A bounce is the floor pushing *up*; it should barely touch how fast the
+    thing is already travelling sideways, which is what lets a thrown ball skip
+    on and on across a room. Four hops at 0.75 threw away three quarters of the
+    throw, so a thrown pet spent nearly all its travel before its first contact.
+
+  **The lesson worth keeping is about the test, not the constants.** There *was*
+  a skid test, and it passed throughout: it flicked hard enough to saturate
+  `THROW_MAX`, and at 1800px/s the pet carried 582px, which is plainly momentum.
+  An ordinary hand sweep is about 600px/s, and that carried 181px — under three
+  of the pet's own body lengths. Carry distance goes as the square of release
+  speed, so the top of the range says almost nothing about the middle of it, and
+  the middle is the only part anyone's hand actually produces.
+
+  So the tests now name a speed (`~600px/s`, stated and asserted to be clear of
+  the cap) and measure in body lengths, and the bounce case is expressed as a
+  *ratio* — ground covered after the first touch against ground covered before it
+  — so it needs no absolute distance and does not have to be retuned whenever
+  gravity or the friction moves. It also runs in a lane wide enough that the pet
+  never reaches a side, because `WALL_BOUNCE` takes 40% of the forward speed and
+  would otherwise be most of what the test measured. `laneW` in the harness is
+  settable for that reason, exactly as `laneH` is.
 
   **The tumble is a leaky integrator, not an accumulating angle.** `pet.spin`
   comes off the release speed and drives `pet.tumble`, which is pulled back
