@@ -161,21 +161,7 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
 
 - **A release is a throw, and the throw is the gesture rather than a frame.**
   `throwFrom()` measures the displacement across the last `THROW_WINDOW` of
-  pointer history over that window's own duration.
-  **`hist` records movement, not time, and stillness fades the throw instead of
-  erasing it.** This is the one that actually made the feature feel broken and
-  that nothing caught for two rounds. Measuring the last 90ms of *wall clock* put
-  a dead zone on the commonest gesture there is: nobody releases the button
-  mid-sweep — you sweep, you stop, you let go — and a stop of 90ms left the window
-  holding nothing but stationary samples, so the throw was exactly zero and the
-  pet dropped where it stood. A tenth of a second is inside ordinary release
-  latency, so *most throws silently were not throws*. Stationary frames now record
-  nothing and accumulate `g.still`, which scales the result from full at
-  `THROW_GRACE_FULL` to nothing by `THROW_GRACE_ZERO` — so "sweep, stop, release"
-  throws and "hold it there, then release" puts it down. **Any test that releases
-  on the same frame as its last mousemove cannot see this**, which is exactly why
-  every test passed while the thing was dead in the hand; the fixed-step harness
-  makes that the path of least resistance, so hold still deliberately. The carry's smoothed `pet.vx`
+  pointer history over that window's own duration. The carry's smoothed `pet.vx`
   is deliberately *not* used: it is an exponential average that converges over
   about five frames, so the same flick let go of after three frames and after
   twelve gives two different throws — a throw you cannot repeat, for a reason
@@ -184,6 +170,25 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   that separates them is *"the same gesture throws the same"*, not *"a flick
   throws harder"*. The cap is a **speed**, not a per-axis clamp — clamped per axis
   the hardest throw available is a diagonal one, at √2 times the limit.
+  **The window is wall clock, and that is a decision, not an oversight.** Stop
+  moving for `THROW_WINDOW` before letting go and the window holds only stationary
+  samples, so there is no throw and the pet simply drops. Since that is inside
+  ordinary button-release latency, in practice most releases *are* drops — which
+  is the wanted behaviour: drop and bounce. A version that removed the dead zone
+  (recording movement only, and fading the throw by how long the hand had rested —
+  `bdfa0ad`, since reverted) made every release carry the full sweep speed,
+  and it read as firing a cannon.
+  **The rough edge that leaves is real**: the cutoff is abrupt and sits inside
+  human latency, so a release made while the hand is still moving throws at
+  1800px/s while the same intent a tenth of a second later throws nothing. If that
+  inconsistency ever needs fixing, the stillness fade is the shape of the answer,
+  but it only works alongside a far lower `THROW_MAX` — reinstating it alone is
+  the cannon again. And **no test can see any of this if it releases on the same
+  frame as its last `mousemove`**, which is what `dragTo()` does and what a
+  fixed-step harness makes easy: those tests measure a gesture no hand performs.
+  Both faults here were found by driving the real `tick()` from a simulated rAF
+  with pointer events on their own 125Hz clock, because the bug lives in the gap
+  between the pointer's clock and the render loop's.
   **The flight is a parabola, and that is two statements: horizontal speed never
   changes, vertical speed changes by the same amount every frame.** So there is
   deliberately **no horizontal drag in flight** — drag makes the pet stall

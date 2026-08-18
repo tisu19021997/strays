@@ -440,30 +440,32 @@ in the lane is painted white.
   only after writing that did the mutant die. Both tests are kept; only one of
   them was ever load-bearing.
 
-  **The window is a window of movement, and it took two rounds of tuning physics
-  to find out why none of it helped.** The throw was the last `THROW_WINDOW` of
-  *wall clock*, which put a dead zone directly on top of the commonest gesture
-  there is. Nobody releases the button mid-sweep: you sweep, you stop, you let go.
-  A stop of 90ms was enough for the window to contain nothing but stationary
-  samples, so the measured displacement was zero, and the pet dropped where it
-  stood. A tenth of a second is well inside ordinary release latency — so *most
-  throws silently were not throws*, and the ones that did work were the ones where
-  the hand happened to still be moving.
+  **The window is wall clock, so stopping before you let go means no throw — and
+  that is the current intent.** Since `THROW_WINDOW` is 90ms and that is inside
+  ordinary button-release latency, most releases contain only stationary samples
+  and the pet just drops. Which is what is wanted: drop and bounce.
 
-  Stationary frames therefore record nothing at all, and accumulate `g.still`
-  instead. `throwFrom()` scales the result by that: full up to
-  `THROW_GRACE_FULL`, tapering to nothing by `THROW_GRACE_ZERO`. So a sweep
-  followed by a natural pause is a throw, and a pet held in place for a third of
-  a second is being put down — which still has to mean put down, or a pet placed
-  deliberately slides away from where you left it.
+  It was briefly the other way. Recording movement only, and fading the throw by
+  how long the hand had rested, removed the dead zone completely — and made every
+  release carry the full speed of the sweep, which read as firing a cannon. That
+  is `bdfa0ad`, since reverted, and the numbers are in both commit messages if
+  it is ever worth revisiting.
 
-  **No test could see this, and the reason generalises.** Every one of them
-  released on the same frame as its last `mousemove`, because that is what
-  `dragTo()` does and what a fixed-step harness makes easy. The physics tests were
-  all measuring a gesture no hand performs. If a test drives a pointer, make at
-  least one case stop moving before it lets go — and be suspicious of any input
-  test whose events are synchronised to frames, because a real pointer's clock and
-  the render loop's clock have nothing to do with each other.
+  **The rough edge is worth knowing about before you trip over it.** The cutoff is
+  abrupt, and it sits inside human latency: a release made while the hand is still
+  moving throws at up to 1800px/s, and the same intended gesture a tenth of a
+  second later throws nothing at all. The stillness fade is the right shape for
+  fixing that, but only together with a much lower `THROW_MAX` — putting the fade
+  back on its own is the cannon again.
+
+  **And no test can see any of it.** Every test here releases on the same frame as
+  its last `mousemove`, because that is what `dragTo()` does and what a fixed-step
+  harness makes easy — so they all measure a gesture no hand performs. Both throw
+  faults in this file's history were found instead by driving the real `tick()`
+  from a simulated `requestAnimationFrame` with pointer events on their own 125Hz
+  clock. The bug lived in the gap between the pointer's clock and the render
+  loop's, and nothing that ties those two together can show it to you. Be
+  suspicious of any input test whose events are synchronised to frames.
 
   The cap is a **speed**, not a clamp per axis. Clamped per axis, the hardest
   throw in the lane is a diagonal one at √2 times the limit — a limit that only
