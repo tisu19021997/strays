@@ -1293,6 +1293,58 @@ test('a bounce carries a pet on rather than stopping it', (t) => {
     `and the bouncing carried it further still (${Math.round(before)}px flying, ${Math.round(after)}px after)`);
 });
 
+test('a hand that stops before letting go is still throwing', (t) => {
+  /*
+   * The bug that made every other measurement here look fine while the thing
+   * felt dead in the hand.
+   *
+   * The throw was the last 90ms of *wall clock*, and almost nobody releases the
+   * button during the sweep — you sweep, you stop, you let go. A stop of 90ms was
+   * enough for that window to hold nothing but stationary samples, so the throw
+   * came out as exactly zero. A tenth of a second is inside ordinary release
+   * latency, so most throws silently were not throws, and no test could see it
+   * because every one of them released on the same frame as the last movement.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+
+  const sweepThenWait = (stillFrames) => {
+    pet.x = 300; pet.lift = 0; pet.state = 'sit';
+    pet.vx = 0; pet.vy = 0; pet.spin = 0; pet.tumble = 0; pet.tilt = 0;
+    dragTo(world, pet, centreOf(pet) + 400, world.h - 5, 40); // ~600px/s
+    for (let i = 0; i < stillFrames; i++) frame();             // ...then hold still
+    fire('mouseup', {});
+    const speed = Math.abs(pet.vx);
+    settle(world, pet, 1200);
+    return speed;
+  };
+
+  const immediate = sweepThenWait(0);
+  const sixtyMs = sweepThenWait(4);
+  assert.ok(immediate > 400, `released mid-sweep, it throws (${Math.round(immediate)}px/s)`);
+  assert.ok(sixtyMs > immediate * 0.8,
+    `and a 66ms pause costs it almost nothing (${Math.round(sixtyMs)}px/s of ${Math.round(immediate)})`);
+});
+
+test('but a pet held still for a moment is being put down, not thrown', (t) => {
+  // the other side of the grace: it has to reach zero, or a pet placed
+  // deliberately slides away from where you put it
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  dragTo(world, pet, centreOf(pet) + 400, world.h - 5, 40);
+  for (let i = 0; i < 30; i++) frame(); // half a second of stillness
+  fire('mouseup', {});
+
+  assert.equal(pet.vx, 0, 'nothing left of the sweep');
+  const from = pet.x;
+  settle(world, pet, 1200);
+  assert.ok(Math.abs(pet.x - from) < 2, `and it stays where it was put (${Math.round(pet.x - from)}px)`);
+});
+
 test('and a pet set down without moving does not slide at all', (t) => {
   // the other half of it: momentum has to come from the gesture, or a pet put
   // down carefully wanders off across the floor on its own

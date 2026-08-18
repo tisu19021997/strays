@@ -440,6 +440,31 @@ in the lane is painted white.
   only after writing that did the mutant die. Both tests are kept; only one of
   them was ever load-bearing.
 
+  **The window is a window of movement, and it took two rounds of tuning physics
+  to find out why none of it helped.** The throw was the last `THROW_WINDOW` of
+  *wall clock*, which put a dead zone directly on top of the commonest gesture
+  there is. Nobody releases the button mid-sweep: you sweep, you stop, you let go.
+  A stop of 90ms was enough for the window to contain nothing but stationary
+  samples, so the measured displacement was zero, and the pet dropped where it
+  stood. A tenth of a second is well inside ordinary release latency — so *most
+  throws silently were not throws*, and the ones that did work were the ones where
+  the hand happened to still be moving.
+
+  Stationary frames therefore record nothing at all, and accumulate `g.still`
+  instead. `throwFrom()` scales the result by that: full up to
+  `THROW_GRACE_FULL`, tapering to nothing by `THROW_GRACE_ZERO`. So a sweep
+  followed by a natural pause is a throw, and a pet held in place for a third of
+  a second is being put down — which still has to mean put down, or a pet placed
+  deliberately slides away from where you left it.
+
+  **No test could see this, and the reason generalises.** Every one of them
+  released on the same frame as its last `mousemove`, because that is what
+  `dragTo()` does and what a fixed-step harness makes easy. The physics tests were
+  all measuring a gesture no hand performs. If a test drives a pointer, make at
+  least one case stop moving before it lets go — and be suspicious of any input
+  test whose events are synchronised to frames, because a real pointer's clock and
+  the render loop's clock have nothing to do with each other.
+
   The cap is a **speed**, not a clamp per axis. Clamped per axis, the hardest
   throw in the lane is a diagonal one at √2 times the limit — a limit that only
   applies to people who throw in straight lines.

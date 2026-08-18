@@ -744,8 +744,28 @@
    * depending on which frame the button happened to come up on, and smoothing
    * across the whole carry makes every flick come out the same gentle lob.
    */
-  const THROW_WINDOW = 0.09;  // s of pointer history a release is measured over
+  const THROW_WINDOW = 0.09;  // s of pointer *movement* a release is measured over
   const THROW_MAX = 1800;     // px/s, as a speed rather than per-axis
+
+  /*
+   * How long a hand may rest before letting go and still be throwing.
+   *
+   * Measuring the last THROW_WINDOW of wall clock put a dead zone on top of the
+   * commonest gesture there is. Almost nobody releases the button *during* the
+   * sweep: you sweep, you stop, you let go — and a stop of 90ms was enough for
+   * the window to contain nothing but stationary samples, so the throw came out
+   * as exactly zero and the pet dropped where it stood. A tenth of a second is
+   * inside human button-release latency, so the effect was that most throws
+   * silently were not throws.
+   *
+   * So stationary frames are not recorded at all — the window is a window of
+   * movement — and how long the hand has been still scales the result instead:
+   * everything up to THROW_GRACE_FULL is a throw, and it tapers to nothing by
+   * THROW_GRACE_ZERO. Holding a pet still for a third of a second is a person
+   * putting it down, and that still has to mean putting it down.
+   */
+  const THROW_GRACE_FULL = 0.12; // s of stillness that costs the throw nothing
+  const THROW_GRACE_ZERO = 0.32; // s of stillness by which it is a set-down
 
   /*
    * The one place the curve is allowed to stop being a curve, and it is a
@@ -939,13 +959,28 @@
     if (Math.abs(nx - pet.x) > 0.5) {
       pet.dir = pet.fdir = nx > pet.x ? 1 : -1; // facing wherever it is being pulled
     }
+    const was = { x: pet.x, lift: pet.lift };
     pet.x = nx;
     pet.lift = nlift;
 
-    // where the pointer has been, for the throw. Trimmed to the window rather
-    // than to a count, so it means the same thing at any frame rate.
-    g.hist.push({ x: nx, lift: nlift, t: world.time });
-    while (g.hist.length > 2 && world.time - g.hist[0].t > THROW_WINDOW) g.hist.shift();
+    /*
+     * Where the pointer has been, for the throw — a window of *movement*, so a
+     * hand that comes to rest before letting go does not quietly erase it. A
+     * stationary frame records nothing and counts towards `still` instead, which
+     * is what throwFrom() fades the throw out by.
+     *
+     * Trimmed against the newest entry rather than against world.time, because
+     * once the pointer stops those two stop being the same thing and trimming by
+     * the clock would empty the window the moment the hand paused.
+     */
+    if (Math.abs(nx - was.x) > 0.01 || Math.abs(nlift - was.lift) > 0.01) {
+      g.still = 0;
+      g.hist.push({ x: nx, lift: nlift, t: world.time });
+      while (g.hist.length > 2 &&
+             g.hist[g.hist.length - 1].t - g.hist[0].t > THROW_WINDOW) g.hist.shift();
+    } else {
+      g.still += dt;
+    }
 
     // swing it about and it fights harder, which is the whole reason the carry
     // speed is tracked at all rather than only sampled at the release
@@ -955,17 +990,22 @@
   /*
    * The throw: the gesture that just happened, not the frame it ended on.
    *
-   * Displacement across the kept window over that window's own duration, capped
-   * as a *speed* rather than per axis — a per-axis cap lets a diagonal fling out
-   * at √2 times the limit, so the hardest throw in the lane is a corner one.
+   * Displacement across the kept window of movement over that window's own
+   * duration, capped as a *speed* rather than per axis — a per-axis cap lets a
+   * diagonal fling out at √2 times the limit, so the hardest throw in the lane is
+   * a corner one. Then faded by how long the hand has been still, which is what
+   * keeps "sweep, stop, release" a throw and "hold it there, then release" a
+   * set-down.
    */
   function throwFrom(world, pet, g) {
     const a = g.hist[0], b = g.hist[g.hist.length - 1];
     const span = a && b ? b.t - a.t : 0;
-    if (!span) { pet.vx = 0; pet.vy = 0; pet.spin = 0; return; }
+    const grace = clamp((THROW_GRACE_ZERO - g.still) /
+                        (THROW_GRACE_ZERO - THROW_GRACE_FULL), 0, 1);
+    if (!span || !grace) { pet.vx = 0; pet.vy = 0; pet.spin = 0; return; }
 
-    let vx = (b.x - a.x) / span;
-    let vy = (a.lift - b.lift) / span; // lift is up, vy is down
+    let vx = (b.x - a.x) / span * grace;
+    let vy = (a.lift - b.lift) / span * grace; // lift is up, vy is down
     const speed = Math.hypot(vx, vy);
     if (speed > THROW_MAX) { vx *= THROW_MAX / speed; vy *= THROW_MAX / speed; }
 
@@ -1852,7 +1892,8 @@
       // measured from rather than the frame it happens to land on
       if (pet) {
         world.grab = {
-          pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0, hist: [],
+          pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0,
+          hist: [], still: 0, // hist is movement only; still is how long since any
         };
       }
     }
