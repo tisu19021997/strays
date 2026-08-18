@@ -468,11 +468,21 @@ test('every tool Claude Code can prompt for can raise a card', () => {
     const home = sandbox();
     const run = runGate(home, { ...base, permission_mode: 'default', tool_name: tool, tool_input });
 
+    /*
+     * A directory entry is not a finished file. On Windows this read landed on a
+     * request that existed with zero bytes in it, and `JSON.parse('')` threw
+     * `Unexpected end of JSON input` out of the poll — intermittently, on one leg
+     * of nine, which is the shape of a flake rather than of a bug. A half-written
+     * file is simply not ready yet, so it counts as another turn of the loop.
+     */
     let request = null;
     for (let i = 0; i < 100 && !request; i++) {
       const [f] = pendingFiles(home);
-      if (f) request = JSON.parse(fs.readFileSync(path.join(home, 'pending', f), 'utf8'));
-      else await new Promise((r) => setTimeout(r, 50));
+      if (f) {
+        try { request = JSON.parse(fs.readFileSync(path.join(home, 'pending', f), 'utf8')); }
+        catch { /* still being written */ }
+      }
+      if (!request) await new Promise((r) => setTimeout(r, 50));
     }
     assert.ok(request, `${tool} should raise a card in manual mode`);
     assert.equal(request.tool, tool);

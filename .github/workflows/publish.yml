@@ -23,6 +23,17 @@ on:
         required: false
         type: string
         default: ''
+  # A tag can only trigger its own push once, so a publish that fails for a
+  # reason outside the package — a registry outage, an expired credential, a
+  # fault in this file — otherwise leaves a tagged version that can never be
+  # published without moving the tag. This is how to run it again for a tag that
+  # already exists.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: the tag to publish, e.g. v1.3.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -47,6 +58,10 @@ jobs:
           # but only from 11.5.1, and early 24.x releases shipped 11.3. The step
           # below makes that certain rather than assumed.
           node-version: 24
+          # npm's own trusted-publishing instructions include this, and leaving
+          # it out is the difference between npm resolving auth for the registry
+          # it is about to publish to and not looking for any
+          registry-url: https://registry.npmjs.org
 
       # Trusted publishing (OIDC) needs npm 11.5.1. Which npm a Node release
       # bundles is not something to guess at: below the floor the publish fails
@@ -101,6 +116,22 @@ jobs:
               console.log("ok " + need);
             ' "$f"
           done
+
+      # Trusted publishing failed once with a bare ENEEDAUTH and no mention of
+      # OIDC at all — npm had not attempted the exchange, and nothing in the log
+      # said why, so the cause was indistinguishable between "the token request
+      # was not granted" and "the registry rejected it". These two lines tell
+      # those apart without printing anything secret: the URL is not a
+      # credential, and only its presence is reported.
+      - name: Can this job even ask for an OIDC token?
+        run: |
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "yes: id-token: write is in force, so OIDC is available"
+          else
+            echo "NO: no OIDC token request URL in this job."
+            echo "id-token: write is not in force here — for a called workflow it"
+            echo "has to be granted by the caller as well as by this file."
+          fi
 
       - name: Publish
         env:
