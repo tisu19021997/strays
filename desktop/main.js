@@ -22,6 +22,15 @@ const { resolveJumpTarget, loadDesktopIndex, readSessionHost } = require('./sess
 const { Approvals } = require('./approvals');
 const { checkForUpdate } = require('./update');
 const { PointerGuard } = require('./pointer-guard');
+const { appVersion } = require('./version');
+const { resolveRoster, mergeRoster } = require('./pet-roster');
+/*
+ * The engine, in the main process, purely to be asked what the built-in pets
+ * *are* — their ids, names, grids and palettes. It mounts nothing here (that
+ * needs a document) and the Pets window draws each row's real sprite from this,
+ * so the window's idea of Grep cannot drift from the lane's.
+ */
+const Strays = require('../strays.js');
 
 /*
  * How much of the screen the lane covers.
@@ -60,6 +69,7 @@ const REPLIES_DIR = path.join(BASE_DIR, 'replies');
 const UPDATE_STAMP = path.join(BASE_DIR, 'update-check.json');
 
 let win = null;
+let petsWin = null;
 let tray = null;
 let watcher = null;
 let usage = null;
@@ -208,10 +218,9 @@ function createWindow() {
   }
 
   win.webContents.on('did-finish-load', () => {
-    try {
-      const defs = JSON.parse(fs.readFileSync(CUSTOM_PETS_FILE, 'utf8'));
-      if (Array.isArray(defs) && defs.length) send('custom-pets', defs);
-    } catch { /* no custom pets — fine */ }
+    // the custom defs and then the order over them; applyRoster sends both, in
+    // that order, because an order cannot name a pet the world has never seen
+    applyRoster();
     send('show-mischief', mischief);
     // surface approvals that arrived before the window was ready
     approvals.scanPending();
@@ -250,40 +259,31 @@ function createTray() {
   rebuildTrayMenu();
 }
 
+/*
+ * The tray, which is the only UI this app has apart from the lane itself.
+ *
+ * Kept deliberately short, and what is left is not a matter of taste. Two items
+ * here are the documented way out of a real failure — "Carry pets anywhere on
+ * screen" is how you shrink a lane whose pointer claim has wedged, and "Clicking
+ * a pet" overrides a jump heuristic that `sessions.js` openly calls a guess.
+ * "Connect to Claude Code" is setup rather than preference: the downloadable app
+ * exists for people with no terminal, so it is their only route to the hooks. And
+ * "Command approvals" writes the flag file that is the Allow/Deny feature's only
+ * on-switch. None of those can move into a window that has to be found first.
+ *
+ * The cosmetics that used to be here — naming sessions, Heisenbug wandering,
+ * party mode, celebrate, following sessions at all — are in the Pets window now.
+ */
 function rebuildTrayMenu() {
   // usage updates rebuild this every few seconds, so the config is read once
   const mode = jumpMode();
   const menu = Menu.buildFromTemplate([
-    { label: 'strays', enabled: false },
+    { label: 'STRAYS', enabled: false },
     ...(usageLine ? [{ label: usageLine, enabled: false }] : []),
     { type: 'separator' },
+    { label: 'Pets…', click: openPetsWindow },
     {
-      label: 'Follow Claude Code sessions',
-      type: 'checkbox',
-      checked: followClaude,
-      click: (item) => {
-        followClaude = item.checked;
-        // switching off empties the renderer's session list, so switching back
-        // on has to re-announce: the watcher deduplicates, and a session parked
-        // in `waiting` would otherwise leave every pet unbound indefinitely
-        if (!followClaude) send('claude-status', { state: null, sessions: [] });
-        else if (watcher) { watcher.forceNextEmit(); watcher.poll(); }
-      },
-    },
-    {
-      label: 'Name the session on each pet',
-      type: 'checkbox',
-      checked: showTitles,
-      click: (item) => { showTitles = item.checked; send('show-titles', showTitles); },
-    },
-    {
-      label: 'Heisenbug wanders off when you leave',
-      type: 'checkbox',
-      checked: mischief,
-      click: (item) => { mischief = item.checked; send('show-mischief', mischief); },
-    },
-    {
-      label: 'Carry pets anywhere on screen',
+      label: 'Carry pets anywhere',
       type: 'checkbox',
       checked: typeof readConfig().laneHeight !== 'number',
       click: (item) => {
@@ -295,7 +295,7 @@ function rebuildTrayMenu() {
       label: 'Clicking a pet',
       submenu: [
         {
-          label: 'Keep my layout when it can',
+          label: 'Keep my layout',
           type: 'radio',
           checked: mode === 'auto',
           click: () => writeConfig({ jumpMode: 'auto' }),
@@ -315,7 +315,7 @@ function rebuildTrayMenu() {
       ],
     },
     {
-      label: 'Command approvals (Allow/Deny)',
+      label: 'Approvals',
       type: 'checkbox',
       checked: fs.existsSync(APPROVALS_FLAG),
       click: (item) => {
@@ -333,22 +333,15 @@ function rebuildTrayMenu() {
       label: hooksInstalled() ? 'Disconnect from Claude Code' : 'Connect to Claude Code…',
       click: () => connectToClaudeCode(!hooksInstalled()),
     },
+    { type: 'separator' },
     {
-      label: 'Start strays at login',
+      label: 'Start at login',
       type: 'checkbox',
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, openAsHidden: true }),
     },
     {
-      label: 'Party mode',
-      type: 'checkbox',
-      checked: party,
-      click: (item) => { party = item.checked; send('party', party); },
-    },
-    { label: 'Celebrate', click: () => send('celebrate') },
-    { type: 'separator' },
-    {
-      label: paused ? 'Resume pets' : 'Pause pets',
+      label: paused ? 'Resume' : 'Pause',
       click: () => {
         paused = !paused;
         if (paused) win.hide(); else win.show();
@@ -366,13 +359,13 @@ function rebuildTrayMenu() {
       { label: updateNotice.label, enabled: false },
       { label: updateNotice.detail, enabled: false },
       ...(updateNotice.command ? [{
-        label: 'Copy the update command',
+        label: 'Copy update command',
         click: () => clipboard.writeText(updateNotice.command),
       }] : []),
       // ...and for the downloadable app there is no command to copy, so the
       // menu opens the page the new one is on instead
       ...(app.isPackaged && !updateNotice.command ? [{
-        label: 'Open the download page',
+        label: 'Download',
         click: () => shell.openExternal(RELEASES_URL),
       }] : []),
       {
@@ -397,7 +390,7 @@ function rebuildTrayMenu() {
  */
 function lookForUpdate() {
   if (readConfig().updateCheck === false) return debug('[update] check is switched off');
-  checkForUpdate({ current: app.getVersion(), stampFile: UPDATE_STAMP })
+  checkForUpdate({ current: appVersion(app.getVersion()), stampFile: UPDATE_STAMP })
     .then((notice) => {
       debug('[update]', notice ? notice.label : 'up to date, or no answer');
       if (!notice) return;
@@ -436,6 +429,139 @@ function writeConfig(patch) {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + '\n');
   } catch (e) { debug('[config] write failed:', e.message); }
   rebuildTrayMenu();
+}
+
+// -------------------------------------------------------------- the roster
+/*
+ * Who is on the team, and in what order sessions reach them.
+ *
+ * Two sources: the built-in pets the engine ships, and whatever is in
+ * custom-pets.json right now. Both are read fresh each time rather than cached —
+ * a pet can be drawn in the editor while the window is open, and the file is the
+ * only place that says so.
+ */
+function readCustomDefs() {
+  try {
+    const defs = JSON.parse(fs.readFileSync(CUSTOM_PETS_FILE, 'utf8'));
+    return Array.isArray(defs) ? defs.filter((d) => d && d.name) : [];
+  } catch { return []; /* no custom pets — fine */ }
+}
+
+function currentRoster() {
+  const builtIns = Strays.builtIns();
+  const customs = readCustomDefs();
+  const resolved = resolveRoster(readConfig().pets, {
+    builtIns: builtIns.map((p) => p.id),
+    customs: customs.map((d) => d.name),
+  });
+  // art for every row, so the window can draw the pet rather than name it
+  const art = new Map([
+    ...builtIns.map((p) => [p.id, { ...p, custom: false }]),
+    ...customs.map((d) => [d.name, {
+      id: d.name, name: d.name, custom: true, grids: d.grids, palette: d.palette,
+    }]),
+  ]);
+  return { ...resolved, pets: resolved.order.map((id) => art.get(id)).filter(Boolean) };
+}
+
+/*
+ * The enabled team, in order, to the lane.
+ *
+ * The defs go first and go every time. They are only *registered* on that side,
+ * so re-sending is free and idempotent — and it is what lets a pet drawn in the
+ * editor join the lane without restarting the overlay, which used to be a
+ * documented limitation rather than a choice.
+ */
+function applyRoster(opts) {
+  const defs = readCustomDefs();
+  if (defs.length) send('custom-pets', defs);
+  const { enabled } = currentRoster();
+  /*
+   * `rebind` is only ever set by a save from the Pets window. The array order
+   * decides who takes the *next* session, and bindSessions is sticky, so a
+   * reorder with conversations already live is invisible without it — which is
+   * exactly how it was reported: the order not applying until Follow Claude Code
+   * sessions was toggled off and on. Launch and window-focus deliberately do not
+   * set it; re-dealing conversations because a window got focus is worse.
+   */
+  const rebind = !!(opts && opts.rebind);
+  debug('[roster]', enabled.join(' -> ') || '(nobody)', rebind ? '(re-dealt)' : '');
+  send('roster', { ids: enabled, rebind });
+}
+
+function openPetsWindow() {
+  if (petsWin && !petsWin.isDestroyed()) return petsWin.show(), petsWin.focus();
+  petsWin = new BrowserWindow({
+    width: 420, height: 700,
+    title: 'PETS',
+    // the lane's window is frameless, click-through and unfocusable; this one is
+    // an ordinary window, because it is one
+    resizable: true, minimizable: true, fullscreenable: false,
+    backgroundColor: '#1d1f27',
+    webPreferences: {
+      preload: path.join(__dirname, 'pets-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  petsWin.setMenuBarVisibility(false);
+  petsWin.loadFile(path.join(__dirname, 'pets-window.html'));
+  petsWin.on('closed', () => { petsWin = null; });
+  /*
+   * Re-read on focus rather than watching the file. Drawing a pet in the editor
+   * means coming back to this window, so focus is the moment the list is looked
+   * at — and fs.watch on custom-pets.json is unreliable for the write the editor
+   * actually performs, which replaces the file rather than editing it in place.
+   */
+  petsWin.on('focus', () => {
+    if (petsWin && !petsWin.isDestroyed()) petsWin.webContents.send('pets:changed');
+    // and the lane, so a pet drawn in the editor joins the team on the spot
+    // rather than at the next launch. setRoster reuses the pets already out, so
+    // this is a no-op when nothing has changed.
+    applyRoster();
+  });
+  if (process.env.STRAYS_DEBUG) {
+    petsWin.webContents.on('console-message', (_e, _l, msg) => console.log('[pets]', msg));
+  }
+}
+
+ipcMain.handle('pets:load', () => {
+  const { pets, enabled } = currentRoster();
+  return {
+    pets,
+    enabled,
+    toggles: { follow: followClaude, titles: showTitles, mischief, party },
+  };
+});
+
+ipcMain.on('pets:save', (_e, update) => {
+  // merge rather than overwrite: the window can only report on the pets it drew,
+  // so a straight write loses every preference about one that is not on disk
+  writeConfig({ pets: mergeRoster(readConfig().pets || {}, update) });
+  // the user just stated an order, so make it take effect now
+  applyRoster({ rebind: true });
+});
+
+ipcMain.on('pets:toggle', (_e, { key, value }) => {
+  const on = !!value;
+  if (key === 'follow') setFollowClaude(on);
+  else if (key === 'titles') { showTitles = on; send('show-titles', on); }
+  else if (key === 'mischief') { mischief = on; send('show-mischief', on); }
+  else if (key === 'party') { party = on; send('party', on); }
+});
+
+ipcMain.on('pets:celebrate', () => send('celebrate'));
+
+/*
+ * Following, from either the window or a future caller. Switching it off empties
+ * the renderer's session list, so switching it back on has to re-announce: the
+ * watcher deduplicates, and a session parked in `waiting` would otherwise leave
+ * every pet unbound indefinitely.
+ */
+function setFollowClaude(on) {
+  followClaude = on;
+  if (!followClaude) send('claude-status', { state: null, sessions: [] });
+  else if (watcher) { watcher.forceNextEmit(); watcher.poll(); }
 }
 
 function performJump(action) {
@@ -659,7 +785,7 @@ app.whenReady().then(() => {
     send('usage', stats);
     const tok = stats.input + stats.output + stats.cacheRead + stats.cacheWrite;
     const fmt = tok >= 1e6 ? (tok / 1e6).toFixed(1) + 'M' : Math.round(tok / 1e3) + 'k';
-    usageLine = `Today: ${fmt} tok · ~$${stats.cost.toFixed(2)}${stats.unpriced ? '+' : ''}`;
+    usageLine = `TODAY ${fmt} TOK · ~$${stats.cost.toFixed(2)}${stats.unpriced ? '+' : ''}`;
     rebuildTrayMenu();
   });
   usage.start();

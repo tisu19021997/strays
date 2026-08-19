@@ -14,6 +14,8 @@ strays/
 ├── index.html          demo / landing page
 ├── editor.html         pixel editor + PNG import for custom pets
 ├── desktop/            Electron overlay: window, tray, watcher, approval gate
+│   ├── pets-window.*   the Pets window — who is on the team, in what order
+│   ├── pet-roster.js   config + what exists -> the ordered team (pure)
 │   ├── hooks/          the Claude Code hooks (gate + session-host recorder)
 │   └── test/           node:test suite, no framework
 ├── docs/               approvals, custom pets, development notes, specs
@@ -56,6 +58,64 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   restart the overlay after editing.
 - Copy the `CAT`, `DOG` or `FISH` grids at the top of `strays.js` as a starting
   point; per-pet behaviour lives further down in the same file.
+
+## The team, and its order
+
+`~/.strays/config.json` → `pets: { order, off }`, edited by the Pets window
+(🐾 → **Pets…**), resolved by `pet-roster.js`, applied by `Strays.setRoster(ids)`.
+
+- **The order is the order sessions are handed out in.** Position one is the pet
+  you see when one Claude window is open. `pet-roster.js` names built-ins by kind
+  and customs by name.
+- **`bindSessions` has two orderings on purpose.** It used to reshuffle the fish
+  to the end on the way in, which would silently override anything a user drags.
+  An explicit roster is honoured **verbatim**; the reshuffle survives only when
+  `world.roster` is null, which is the browser build. Nothing moved for existing
+  users because the default roster already ends with the fish — pinned by the test
+  *"customs sit between the land pets and the fish, as the old filter had it"*.
+- **A stated reorder needs `setRoster(ids, { rebind: true })`, or it does nothing
+  visible.** The order sets draw order and who takes the **next** session — it does
+  not decide where a pet stands, and `bindSessions` is sticky. So dragging a row
+  with conversations already live changed nothing at all, and the way round it was
+  to toggle *Follow Claude Code sessions*, which clears the session list and
+  re-announces it. `rebind` drops the bindings so the next frame deals them down
+  the new list. It is set **only** by a save from the Pets window: `applyRoster()`
+  also runs at launch and on every window focus, and re-dealing conversations
+  because a window got focus is worse than the original bug. Both directions are
+  pinned — the missing re-deal *and* the always-re-deal.
+- **Reordering is still not a remount.** `setRoster` reuses pets already out, so
+  nobody moves and no carry is reset. Three references live *outside*
+  `world.pets` and all go stale when a pet is switched off — the ball, a deadlock,
+  the pointer's grab — and the guards next to `bindSessions` do not cover them
+  because those fire on `hidden`, which a removed pet will never have set again.
+  The deadlock case must free the pet that **stayed**, or a cat stands there for
+  ever waiting for an animal that no longer exists.
+- **`registerCustomPet` remembers a def without putting a pet out**, and the
+  overlay uses that rather than `addCustomPet` so exactly one thing decides who is
+  on the lane. `applyRoster` re-sends the defs every time, which is what lets a pet
+  drawn in the editor join without a restart — and would double every pet up if
+  registering also adopted.
+
+## The Pets window is Nothing-styled
+
+`pets-window.html` follows the Nothing design system: monochrome, typographic,
+three layers (display title / body names / mono ALL CAPS metadata), 1px borders,
+no radius on rows, no gradients, no shadows, opacity-only transitions on
+`cubic-bezier(0.25, 0.1, 0.25, 1)`, dot-matrix background at 0.14. Light and dark
+are both authored, not derived.
+
+- **Red (`#D71921`) is an interrupt, not a colour.** The only thing allowed to use
+  it is an empty lane. A checked toggle is grayscale, because a pet being switched
+  on is not an event.
+- **The fonts are named but never fetched.** Space Grotesk / Space Mono / Doto sit
+  first in each stack so a machine that has them uses them, then it falls back to
+  the system stacks. Do not add a webfont link: `update.js` holds *the* only
+  network request in the project and the README's privacy claim depends on that
+  staying true. Everything else in the system is structural and survives the
+  substitution.
+- The lane itself is **not** Nothing-styled and must not be — it floats over other
+  people's windows, so its own rules (nothing white, nothing translucent,
+  `pixelPlate()`) win there.
 
 ## Gotchas
 
@@ -116,6 +176,19 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
 
 - **Hooks are read at session start.** After `npm run hooks`, already-open
   Claude Code sessions keep the hooks they started with.
+
+- **The app's version comes from `desktop/version.js`, never `app.getVersion()`.**
+  `bin/strays.js` starts Electron with `desktop/` as the app directory, so
+  `getVersion()` reads `desktop/package.json` — which existed only to name an entry
+  point and carried a placeholder `1.0.0` through four releases. The update check
+  therefore compared **1.0.0** against npm's latest and told every `npx` and global
+  install, once a day for ever, that there was an update to fetch. The packaged app
+  was correct purely by accident, because its manifest is the real one. So
+  `desktop/package.json` now declares **no version at all** — a second copy of a
+  number the release workflow does not bump is a number that will be wrong — and
+  `desktop/test/version.test.js` holds both halves. A wrong version here does not
+  fail, it lies, which is why it went unnoticed.
+
 - **The lane's chrome is one column per pet, two tiers at most.** A pet's
   nameplate *expands in place* on hover — it never raises a second label. The
   speech bubble sits above the nameplate, anchored to `pet.chromeTop`. Three

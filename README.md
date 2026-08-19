@@ -38,8 +38,8 @@ Want a fifth? [Draw one.](#make-your-own)
   hands its pet back.
 - **Each pet is labelled** with the name of the session it's carrying, so you can
   tell four of them apart at a glance. A small badge shows thinking, working,
-  waiting on you, resting, or done. (Turn the names off in the tray if you'd
-  rather not.)
+  waiting on you, resting, or done. (Turn the names off in the Pets window if
+  you'd rather not.)
 - **Point at a pet for the details** — which checkout it's in, what it's doing.
   The label grows a line rather than covering anything.
 - **Each pet talks in its own colour**, so you know who said it without looking.
@@ -87,8 +87,8 @@ No Terminal, no Node, nothing to install first.
    menu bar → **Connect to Claude Code**.
 
 Steps 2 and 3 are once, ever. strays then installs its own Claude Code hooks,
-keeps any you already have, and backs up your settings first. Turn on **Start
-strays at login** in the same menu and you never think about it again.
+keeps any you already have, and backs up your settings first. Turn on **Start at
+login** in the same menu and you never think about it again.
 
 <details>
 <summary>Why macOS does that, and why the download is 171MB</summary>
@@ -130,7 +130,7 @@ npx claude-strays
 
 That's it — the pets come out. A 🐾 appears in your menu bar (macOS) or system
 tray (Windows, Linux), and that's where everything lives; see
-[the tray](#the-tray) below.
+[the tray](#the-tray) and [the Pets window](#the-pets-window) below.
 
 To keep the command around instead of fetching it each time:
 
@@ -175,7 +175,7 @@ npm install -g claude-strays@latest
 
 You don't have to remember to check. Once a day the overlay asks npm what the
 latest version is, and if it's newer than yours the tray grows a line saying so,
-with the exact command for the way you installed it — **🐾 → Copy the update
+with the exact command for the way you installed it — **🐾 → Copy update
 command**. Nothing installs itself: replacing the app underneath you would take
 your pets away mid-session, which is worse than being a version behind.
 
@@ -238,20 +238,50 @@ saying what you saw is genuinely useful.
 
 ## The tray
 
-Everything the pets do is switchable, from the 🐾 in your menu bar or system
-tray:
+The 🐾 in your menu bar or system tray is kept short. It holds setup, the two
+switches that get you out of trouble, and the way out:
 
 | | what it does |
 | --- | --- |
-| **Follow Claude Code sessions** | Off, and the team just hangs out — no session states, no badges. |
-| **Name the session on each pet** | Off leaves the state badge but drops the name. |
-| **Heisenbug wanders off when you leave** | She teleports across the lane once you've been away from the keyboard a while. Off means she stays put. |
-| **Carry pets anywhere on screen** | On, a pet can be lifted to the top of the display. Off puts the lane back to a strip along the bottom, and pets can only be raised an inch or so. |
+| **Pets…** | Opens the [Pets window](#the-pets-window) — who's on the team, and in what order. |
+| **Carry pets anywhere** | On, a pet can be lifted to the top of the display. Off puts the lane back to a strip along the bottom, and pets can only be raised an inch or so. |
 | **Clicking a pet** | Whether landing on a session may rearrange your panes — see below. |
+| **Approvals** | Turns the Allow / Deny cards on, once the hooks are installed. |
+| **Connect to Claude Code** | Installs the hooks, for anyone who never opens a terminal. |
+| **Start at login** | |
+| **Pause** | Hides the lane without quitting. |
 | **Don't check for updates** | Appears once there's a newer version. Stops the daily version check for good. |
-| **Command approvals** | Turns the Allow / Deny cards on, once the hooks are installed. |
-| **Party mode** / **Celebrate** | Hats, and confetti on demand. |
-| **Pause pets** | Hides the lane without quitting. |
+| **Quit** | |
+
+Everything cosmetic — following sessions at all, naming them, whether Heisenbug
+wanders, party mode — moved into the Pets window.
+
+## The Pets window
+
+🐾 → **Pets…**
+
+<img src="docs/pets-window.png" alt="The Pets window: each pet drawn as itself, with a checkbox and a drag handle" width="380">
+
+Each pet is drawn as itself, so you're picking animals rather than reading a list
+of names. Yours are marked **custom**.
+
+- **Uncheck a pet** and it leaves the lane.
+- **Drag to reorder**, and the order is the thing that matters: the pet at the
+  top takes the first session, the next one takes the second, and so on. Each row
+  says which session it would get.
+
+That order used to be fixed — the two cats, the dog, then the fish, with anything
+you'd drawn wedged in before her. Now it's yours, including putting Heisenbug
+first if you like her best.
+
+A pet you draw in the [editor](#make-your-own) turns up in this list, and joins
+the lane as soon as the window has been looked at — no restart.
+
+It's all in `~/.strays/config.json` under `pets`, if you'd rather type:
+
+```json
+{ "pets": { "order": ["Yoda", "grep", "segfault"], "off": ["heisenbug"] } }
+```
 
 ### Say yes without switching windows
 
@@ -284,6 +314,10 @@ Run `strays editor` (or open `editor.html`), draw a creature on the pixel grid �
 it be squashed into pixels for you — give it a name and a few things to say, and
 hit **adopt**. It joins the team.
 
+For the desktop overlay, save it into `~/.strays/custom-pets.json`. It shows up in
+🐾 → **Pets…** marked **custom**, and you can drag it above the built-ins so it's
+the pet you see first.
+
 More in [docs/custom-pets.md](docs/custom-pets.md).
 
 ## Free, and open source
@@ -306,11 +340,11 @@ It started as a birthday gift for Claude. It seemed unfair to keep it.
 | --- | --- |
 | **Two of every pet** | Two overlays were running. Newer builds refuse to start a second one; `strays stop` then `strays`. |
 | **No pets at all** | Nothing is bound and the lane is idle, or the overlay isn't running. Run `strays` again, and `STRAYS_DEBUG=1 strays` will say what it's seeing. |
-| **Pets but no names** | Either names are off in the tray, or those pets have no session — an unnamed pet is one that isn't carrying anything. |
+| **Pets but no names** | Either names are off in 🐾 → **Pets…**, or those pets have no session — an unnamed pet is one that isn't carrying anything. |
 | **No Allow / Deny cards** | Expected in `auto` mode. Otherwise check `~/.strays/gate.log`, which records a line and a reason for every call. |
 | **A pet for a session I finished** | It keeps its pet for a while after the turn ends, quietly, then hands it back. |
 | **Shadows on the floor but no pets** | The lane froze mid-frame. `strays restart` brings them back; if it happens again, an issue with roughly how long it had been running is genuinely useful. |
-| **Clicks aren't landing anywhere** | The lane covers the screen so a pet can be carried up it, and it only catches the pointer while you're touching a pet. If that ever sticks it lets go within a couple of seconds by itself. If it doesn't, `strays stop` from a terminal, and **🐾 → Carry pets anywhere on screen** turns the tall lane off. |
+| **Clicks aren't landing anywhere** | The lane covers the screen so a pet can be carried up it, and it only catches the pointer while you're touching a pet. If that ever sticks it lets go within a couple of seconds by itself. If it doesn't, `strays stop` from a terminal, and **🐾 → Carry pets anywhere** turns the tall lane off. |
 
 `STRAYS_DEBUG=1 strays` logs session states, token usage, presence and
 approval traffic.

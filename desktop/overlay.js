@@ -41,11 +41,37 @@ window.petsBridge.onObserved((on) => Strays.setObserved(on));
 window.petsBridge.onMischief((on) => Strays.setMischief(on));
 window.petsBridge.onUsage((stats) => Strays.setUsage(stats));
 window.petsBridge.onCelebrate(() => Strays.celebrate());
+/*
+ * Custom pets are *registered* here, not added: the roster that arrives next is
+ * the only thing that decides who is actually on the lane. Adding them here too
+ * would put a pet out that the Pets window has switched off, and would double it
+ * up whenever the defs are re-sent — which happens every time one is drawn.
+ */
 window.petsBridge.onCustomPets((defs) => {
   defs.forEach((def) => {
-    try { Strays.addCustomPet(def, false); }
-    catch (e) { console.warn('skipping custom pet:', e.message); }
+    if (!Strays.registerCustomPet(def)) console.warn('skipping custom pet:', def && def.name);
   });
+});
+/*
+ * Who is on the team, and in what order sessions reach them — from the Pets
+ * window, via main.js, which always sends the custom defs first because an order
+ * cannot name a pet the world has never been handed.
+ *
+ * Reordering is not a remount: pets already out keep their position, their state
+ * and any carry in progress, so dragging a row moves nobody on screen.
+ *
+ * `rebind` is set only by a save from the Pets window, and it is what makes that
+ * save visible. The order decides who takes the *next* session and bindSessions
+ * is sticky, so without it a reorder with conversations already live changes
+ * nothing at all — the bug that reported this was the order appearing to do
+ * nothing until Follow Claude Code sessions was toggled off and on.
+ */
+window.petsBridge.onRoster(({ ids, rebind }) => {
+  Strays.setRoster(ids, { rebind });
+  // what the lane ended up with, which is not always what it was asked for: a
+  // name for a pet this world has never been handed is skipped
+  console.log('roster:', world.pets.map((p) => p.name).join(' -> ') || '(nobody)',
+    rebind ? '(re-dealt)' : '');
 });
 
 // ---------------------------------------------------------- approval cards

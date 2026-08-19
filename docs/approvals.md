@@ -10,7 +10,7 @@ npm run hooks        # installs the hooks into ~/.claude/settings.json
                      # (backs the file up first; npm run unhook removes them)
 ```
 
-Then enable it in the tray: **🐾 → Command approvals (Allow/Deny)**. Already-open
+Then enable it in the tray: **🐾 → Approvals**. Already-open
 Claude Code sessions keep the hooks they started with, so restart them.
 
 ## When you will and will not see a card

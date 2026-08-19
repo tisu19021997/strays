@@ -1619,3 +1619,292 @@ test('the lane hands the canvas back the way it found it', (t) => {
   settle(world, pet);
   assert.equal(stack.depth, 0, 'and it is still balanced after the landing');
 });
+
+// ------------------------------------------------------------------- roster
+/*
+ * Who is on the team, and in what order sessions reach them.
+ *
+ * The order is not cosmetic: bindSessions walks the pet list and hands the first
+ * free pet to each new session, so row one of the Pets window is "the pet you see
+ * when one Claude window is open". Two properties carry the whole feature — the
+ * stated order is obeyed, and obeying it disturbs nothing that is already out.
+ */
+const YODA = {
+  name: 'Yoda',
+  palette: { 1: '#a9c98d', 2: '#84a86a', k: '#17181c' },
+  grids: { walk1: ['.11.', '1221', '.11.'] },
+};
+
+const ids = (world) => world.pets.map((p) => (p.custom ? p.name : p.kind));
+
+test('a stated order is the order sessions are handed out in', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster(['mutex', 'grep', 'segfault']);
+  Strays.setSessions([session('s1'), session('s2'), session('s3')]);
+  frame();
+  assert.deepStrictEqual(ids(world), ['mutex', 'grep', 'segfault']);
+  assert.deepStrictEqual(bound(world), ['s1', 's2', 's3'],
+    'the pet at the top takes the first session');
+});
+
+/*
+ * The fish is last by default because she is the fallback — bindSessions used to
+ * enforce that by filtering, which would quietly override anything a user drags.
+ * An explicit order has to win, or the Pets window is lying about what it does.
+ */
+test('the fish can be dragged to the front, and stays there', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster(['heisenbug', 'segfault', 'grep', 'mutex']);
+  Strays.setSessions([session('only')]);
+  frame();
+  assert.strictEqual(ids(world)[0], 'heisenbug');
+  assert.strictEqual(petFor(world, 'only').kind, 'heisenbug',
+    'the one session goes to the pet at the top, fish or not');
+});
+
+test('with no roster set, the fish is still last', (t) => {
+  const world = mountFollowing(t, { pets: ['heisenbug', 'segfault'] });
+  Strays.setSessions([session('one')]);
+  frame();
+  assert.strictEqual(petFor(world, 'one').kind, 'segfault',
+    'the default reshuffle has to survive for anyone who never opens the window');
+});
+
+/*
+ * The reason this is a roster and not a remount, and the *default* — which is the
+ * path the host takes when it re-applies the roster on launch and every time the
+ * Pets window is focused. Nobody moves and nobody loses the conversation they are
+ * carrying, because re-dealing because a window got focus is worse than useless.
+ *
+ * A reorder the user actually performed passes `{ rebind: true }` and is asserted
+ * separately, below. Getting that distinction wrong in either direction is a bug:
+ * this file once had only this half, and the Pets window looked broken.
+ */
+test('re-applying a roster keeps every pet where it is, with the session it holds', (t) => {
+  const world = mountFollowing(t);
+  Strays.setSessions([session('s1'), session('s2'), session('s3')]);
+  frame();
+
+  const before = new Map(world.pets.map((p) => [p.kind, { x: p.x, id: p.session && p.session.id }]));
+  const order = ['mutex', 'heisenbug', 'segfault', 'grep'];
+  Strays.setRoster(order);
+
+  // asserted before stepping, deliberately: a frame walks the pets along, so
+  // stepping first would measure the lane's own movement and hide a teleport
+  // under it. The claim is that the reorder itself disturbs nothing.
+  assert.deepStrictEqual(ids(world), order, 'the list really was reordered');
+  for (const pet of world.pets) {
+    const was = before.get(pet.kind);
+    assert.strictEqual(pet.x, was.x, `${pet.kind} must not move`);
+    assert.strictEqual(pet.session && pet.session.id, was.id,
+      `${pet.kind} must keep the session it was carrying`);
+  }
+
+  // and the sessions stay put across the frames that follow, rather than being
+  // re-dealt down the new order
+  frame();
+  assert.deepStrictEqual(
+    world.pets.map((p) => p.session && p.session.id),
+    order.map((k) => before.get(k).id),
+  );
+});
+
+/*
+ * ...and the other half, which shipped broken.
+ *
+ * Keeping the bindings is right for a roster the *host* re-applies — at launch, or
+ * whenever the Pets window is focused. It is wrong for a reorder the user just
+ * performed: the array order sets draw order and who takes the **next** session,
+ * not where a pet stands, so with conversations already live a drag changed
+ * nothing anybody could see. It looked like the window did not work, and the way
+ * round it was to toggle Follow Claude Code sessions, which clears the session
+ * list and re-announces it — dealing everyone out again by accident.
+ */
+test('a reorder the user asked for deals the sessions down the new list', (t) => {
+  const world = mountFollowing(t);
+  Strays.setSessions([session('s1'), session('s2'), session('s3')]);
+  frame();
+  assert.strictEqual(petFor(world, 's1').kind, 'segfault', 'the default deal');
+
+  Strays.setRoster(['mutex', 'heisenbug', 'segfault', 'grep'], { rebind: true });
+  frame();
+
+  assert.strictEqual(petFor(world, 's1').kind, 'mutex',
+    'the pet dragged to the top takes the first session');
+  assert.strictEqual(petFor(world, 's2').kind, 'heisenbug');
+  assert.strictEqual(petFor(world, 's3').kind, 'segfault');
+  assert.deepStrictEqual(bound(world), ['s1', 's2', 's3', null]);
+});
+
+test('a re-deal does not move any pet on screen', (t) => {
+  // the point of rebinding rather than remounting: the nameplates change hands,
+  // the animals stay where they are
+  const world = mountFollowing(t);
+  Strays.setSessions([session('s1'), session('s2')]);
+  frame();
+  const where = new Map(world.pets.map((p) => [p.kind, p.x]));
+
+  Strays.setRoster(['heisenbug', 'mutex', 'grep', 'segfault'], { rebind: true });
+  for (const pet of world.pets) {
+    assert.strictEqual(pet.x, where.get(pet.kind), `${pet.kind} must not be teleported`);
+  }
+});
+
+test('a re-deal keeps a carry in progress', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault', 'grep'] });
+  frame();
+  const grep = world.pets.find((p) => p.kind === 'grep');
+  dragTo(world, grep, centreOf(grep) + 10, world.h - 40);
+
+  Strays.setRoster(['grep', 'segfault'], { rebind: true });
+  frame();
+  assert.ok(world.grab && world.grab.pet === grep,
+    'a pet still in the hand when the list is saved stays in the hand');
+  fire('mouseup', {});
+  frame();
+  assert.strictEqual(world.badFrames, 0);
+});
+
+test('switching a pet off takes it out of the lane entirely', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster(['segfault', 'grep']);
+  frame();
+  assert.deepStrictEqual(ids(world), ['segfault', 'grep']);
+  assert.ok(!world.pets.some((p) => p.kind === 'mutex'), 'Mutex is gone, not merely hidden');
+});
+
+test('switching a pet back on brings it out again', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster(['segfault']);
+  frame();
+  Strays.setRoster(['segfault', 'mutex']);
+  frame();
+  assert.deepStrictEqual(ids(world), ['segfault', 'mutex']);
+  assert.ok(world.pets[1].sprites.walk1, 'and is built well enough to draw');
+});
+
+test('an empty roster empties the lane rather than throwing', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster([]);
+  frame();
+  assert.deepStrictEqual(world.pets, []);
+  frame(); // and keeps drawing
+  assert.strictEqual(world.badFrames, 0, 'an empty lane is not a broken one');
+});
+
+/*
+ * A roster names pets, and the config it comes from outlives any one release: a
+ * custom pet deleted from custom-pets.json, or a built-in a future version drops,
+ * leaves a name behind that resolves to nothing. Throwing on it would take the
+ * whole lane down for a stale line in a settings file.
+ */
+test('a name the world has never heard of is skipped, not thrown on', (t) => {
+  const world = mountFollowing(t);
+  Strays.setRoster(['segfault', 'Ghost', 'grep']);
+  frame();
+  assert.deepStrictEqual(ids(world), ['segfault', 'grep']);
+  assert.strictEqual(world.badFrames, 0);
+});
+
+/*
+ * Registering and placing are separate on purpose: the overlay registers every
+ * def it is handed and lets the roster decide who is actually out. If registering
+ * also added the pet, one switched off would appear and then vanish, and re-sending
+ * the defs — which happens whenever one is drawn — would double it up.
+ */
+test('registering a custom pet does not put it out', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault'] });
+  assert.strictEqual(Strays.registerCustomPet(YODA), true);
+  frame();
+  assert.deepStrictEqual(ids(world), ['segfault'], 'registered, not adopted');
+});
+
+test('a registered custom pet can then be placed by name', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault'] });
+  Strays.registerCustomPet(YODA);
+  Strays.setRoster(['Yoda', 'segfault']);
+  Strays.setSessions([session('s1')]);
+  frame();
+  assert.deepStrictEqual(ids(world), ['Yoda', 'segfault']);
+  assert.strictEqual(petFor(world, 's1').name, 'Yoda',
+    'a custom pet at the top takes the first session like any other');
+});
+
+test('re-registering the same name replaces the art rather than adding a pet', (t) => {
+  const world = mountFollowing(t, { pets: [] });
+  Strays.registerCustomPet(YODA);
+  Strays.setRoster(['Yoda']);
+  frame();
+  const wide = { ...YODA, grids: { walk1: ['.1111.', '122221', '.1111.'] } };
+  Strays.registerCustomPet(wide);
+  Strays.setRoster([]);        // out...
+  Strays.setRoster(['Yoda']);  // ...and back, which is when the new art is built
+  frame();
+  assert.strictEqual(world.pets.length, 1, 'still exactly one Yoda');
+  assert.strictEqual(world.pets[0].sprites.walk1[0].length, 6, 'and he is the redrawn one');
+});
+
+test('a malformed def is refused rather than registered', (t) => {
+  mountFollowing(t, { pets: [] });
+  assert.strictEqual(Strays.registerCustomPet({ name: 'Broken' }), false);
+  Strays.setRoster(['Broken']);
+  frame();
+  assert.deepStrictEqual(Strays._world.pets, []);
+});
+
+/*
+ * A pet can be carrying the ball, deadlocked with another, or literally in the
+ * user's hand when its row is unchecked. Each is a reference kept outside
+ * world.pets, and each is asserted on its own — the first version of this set all
+ * three up in one test and then picked the pet up, which passes for the wrong
+ * reason: grabPet already drops the ball and breaks the deadlock, so two thirds
+ * of it was checking work the drag had done.
+ *
+ * The guards beside bindSessions do not cover any of this either. Those fire on
+ * `hidden`, and a pet taken off the roster is not hidden — it is gone, so nothing
+ * will ever set that flag on it again.
+ */
+test('a pet taken out drops the ball it was carrying', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault', 'grep'] });
+  frame();
+  const grep = world.pets.find((p) => p.kind === 'grep');
+  world.ball.held = grep;
+  grep.carrying = 'ball';
+
+  Strays.setRoster(['segfault']);
+  assert.strictEqual(world.ball.held, null, 'the ball is not held by a pet that has gone');
+  frame();
+  assert.strictEqual(world.badFrames, 0);
+});
+
+test('a pet taken out of a deadlock frees the one still on the lane', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault', 'mutex'] });
+  frame();
+  const [segfault, mutex] = world.pets;
+  segfault.state = 'deadlock';
+  mutex.state = 'deadlock';
+  world.deadlock = { a: segfault, b: mutex };
+
+  Strays.setRoster(['segfault']);
+  assert.strictEqual(world.deadlock, null, 'the pair is forgotten');
+  assert.strictEqual(segfault.state, 'walk',
+    'and the cat that stayed goes back to walking rather than standing off ' +
+    'against an animal that no longer exists');
+  frame();
+  assert.strictEqual(world.badFrames, 0);
+});
+
+test('a pet taken out mid-carry is not left stuck to the cursor', (t) => {
+  const world = mountFollowing(t, { pets: ['segfault', 'grep'] });
+  frame();
+  const grep = world.pets.find((p) => p.kind === 'grep');
+  dragTo(world, grep, centreOf(grep) + 10, world.h - 40);
+  assert.ok(world.grab && world.grab.pet === grep, 'the pet really is being carried');
+
+  Strays.setRoster(['segfault']);
+  assert.strictEqual(world.grab, null, 'nothing is left in the hand');
+  frame();
+  fire('mouseup', {});  // the release still has to land somewhere harmless
+  frame();
+  assert.strictEqual(world.badFrames, 0);
+});

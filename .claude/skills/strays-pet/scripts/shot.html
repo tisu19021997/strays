@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#2b2f3a;height:100%;overflow:hidden}</style>
+<!-- the real engine, from the repo root -->
+<script src="../../../../strays.js"></script>
+<script>
+  /*
+   * Park one pet per state at a fixed x with speed 0, so the capture is the same
+   * every run. Left to itself the lane walks the pets and picks states at random,
+   * and two renders of the same grid are then not comparable.
+   */
+  window.__setup = (def, opts) => {
+    Strays.mount({
+      pets: opts.builtins ? ['segfault', 'grep', 'mutex', 'heisenbug'] : [],
+      customPets: [], loadStored: false,
+      height: 240, scale: opts.scale, party: false,
+    });
+    for (const _ of opts.states) Strays.addCustomPet(def, false);
+    const w = Strays._world;
+    const mine = w.pets.filter((p) => p.custom);
+    w.pets.filter((p) => !p.custom).forEach((p, i) => {
+      p.x = 40 + i * 90; p.vx = 0; p.dir = 1; p.speed = 0;
+    });
+    mine.forEach((p, i) => {
+      p.x = (opts.builtins ? 400 : 60) + i * opts.gap;
+      p.vx = 0; p.dir = 1; p.speed = 0;
+      p.state = opts.states[i];
+      p.frame = i === 1 ? 1 : 0;   // so the two walk frames differ
+      p.stateT = 1e6;
+      p.bob = 0; p.squirm = 0; p.tilt = 0; p.tumble = 0;
+    });
+    return w.pets.map((p) => `${p.name}:${p.state}`);
+  };
+</script>

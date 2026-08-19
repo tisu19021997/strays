@@ -106,16 +106,19 @@ function updateNotice(current, latest, kind) {
   const command = updateCommand(kind);
   return {
     version: next,
-    label: `Update available — ${next}`,
+    label: `UPDATE ${next} AVAILABLE`,
     /*
      * Three kinds of person, three sentences. Someone with a command gets it to
      * copy; an npx user is already current next time they run it; and someone
      * who downloaded the app has no terminal in the story at all, so telling
      * them to run anything would be the one instruction they cannot follow.
+     *
+     * Terse, and the version you are on comes first — that is the fact being
+     * reported. No exclamation, no urgency: nothing here is broken.
      */
-    detail: command ? `You have ${current}. Run: ${command}`
-      : kind === 'app' ? `You have ${current}. Download ${next} from the strays releases page.`
-        : `You have ${current}. Your next \`npx ${PACKAGE}\` picks it up.`,
+    detail: command ? `ON ${current} — RUN: ${command}`
+      : kind === 'app' ? `ON ${current} — DOWNLOAD ${next} FROM RELEASES`
+        : `ON ${current} — YOUR NEXT npx ${PACKAGE} PICKS IT UP`,
     command,
   };
 }

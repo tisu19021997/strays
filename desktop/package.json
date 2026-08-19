@@ -1,7 +1,7 @@
 {
   "name": "strays-desktop",
-  "version": "1.0.0",
   "private": true,
   "description": "The Electron overlay. Electron itself, and every command, live in the package at the repo root — this manifest exists so Electron knows which file to start.",
+  "//version": "Deliberately absent. bin/strays.js starts Electron with this directory as the app, so app.getVersion() reads *this* file — and a version here is a second copy of a number only the root package.json ever bumps. It sat at 1.0.0 through four releases and told every npx user there was an update. See desktop/version.js.",
   "main": "main.js"
 }

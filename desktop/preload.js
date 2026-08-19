@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('petsBridge', {
   onParty: (cb) => ipcRenderer.on('party', (_e, on) => cb(on)),
   onCelebrate: (cb) => ipcRenderer.on('celebrate', () => cb()),
   onCustomPets: (cb) => ipcRenderer.on('custom-pets', (_e, defs) => cb(defs)),
+  onRoster: (cb) => ipcRenderer.on('roster', (_e, ids) => cb(ids)),
   onUsage: (cb) => ipcRenderer.on('usage', (_e, stats) => cb(stats)),
   onShowTitles: (cb) => ipcRenderer.on('show-titles', (_e, on) => cb(on)),
   onObserved: (cb) => ipcRenderer.on('observed', (_e, on) => cb(on)),

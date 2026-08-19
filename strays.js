@@ -384,6 +384,16 @@
       status: null,       // legacy global status
       sessions: [],       // per-session states from the desktop watcher
       followMode: false,  // Crew-style: one visible pet per session
+      /*
+       * An explicit team, in the order sessions are handed out — set by the
+       * desktop overlay from the Pets window, null everywhere else. Null is not
+       * "empty": it means nobody has an opinion, and bindSessions keeps its
+       * fish-last default. See setRoster().
+       */
+      roster: null,
+      // name -> def for every custom pet ever handed to this world, so one
+      // switched off in the Pets window can be built again when it comes back
+      customDefs: new Map(),
       showTitles: opts.showTitles !== false, // name the session a pet is carrying
       // null = work it out from the mouse (a web page); a boolean = the host
       // knows better, which the desktop overlay does
@@ -432,7 +442,36 @@
     });
   }
 
+  /*
+   * How a pet is named in a roster and in ~/.strays/config.json: built-ins by
+   * kind, customs by the name their def carries. Two different things because
+   * they are keyed differently — a built-in is a branch in makePet, a custom is
+   * a row in custom-pets.json — and the config has to survive both being
+   * renamed independently.
+   */
+  const petId = (pet) => (pet.custom ? pet.name : pet.kind);
+
+  /*
+   * Name, art and palette per built-in kind, and the order sessions reach them
+   * by default — the fish last, because she is the one who gives up her lane to
+   * a land pet. `builtIns()` publishes this so the Pets window can draw the real
+   * sprite next to each row: a roster of names is a list a user has to decode,
+   * and the whole point of the window is picking animals by looking at them.
+   *
+   * Behaviour stays in makePet. This table is what a pet *is*, not what it does,
+   * and holding it in one place is what stops the window's idea of Grep drifting
+   * from the lane's.
+   */
+  const BUILT_IN_ART = {
+    segfault: { name: 'Segfault', grids: CAT, pal: PALETTES.segfault },
+    grep: { name: 'Grep', grids: DOG, pal: PALETTES.grep },
+    mutex: { name: 'Mutex', grids: CAT, pal: PALETTES.mutex },
+    heisenbug: { name: 'Heisenbug', grids: { walk1: FISH.swim1, walk2: FISH.swim2 }, pal: PALETTES.heisenbug },
+  };
+  const BUILT_IN_KINDS = Object.keys(BUILT_IN_ART);
+
   function makePet(world, kind, x) {
+    const art = BUILT_IN_ART[kind];
     const base = {
       kind, x, dir: Math.random() < 0.5 ? 1 : -1,
       state: 'walk', stateT: rand(1, 3),
@@ -440,19 +479,19 @@
       frame: 0, frameT: 0, bob: 0,
       // held, thrown or falling; see grabPet(), throwFrom() and fallPet()
       lift: 0, vx: 0, vy: 0, squirm: 0, tilt: 0, spin: 0, tumble: 0,
-      name: kind, hat: world.opts.party,
+      name: art ? art.name : kind, hat: world.opts.party,
       session: null,
     };
+    if (art) Object.assign(base, { sprites: spriteSet(art.grids), pal: art.pal });
     if (kind === 'segfault') {
-      Object.assign(base, { name: 'Segfault', sprites: spriteSet(CAT), pal: PALETTES.segfault, speed: 24, crashT: rand(14, 30) });
+      Object.assign(base, { speed: 24, crashT: rand(14, 30) });
     } else if (kind === 'mutex') {
-      Object.assign(base, { name: 'Mutex', sprites: spriteSet(CAT), pal: PALETTES.mutex, speed: 16, lazy: true });
+      Object.assign(base, { speed: 16, lazy: true });
     } else if (kind === 'grep') {
-      Object.assign(base, { name: 'Grep', sprites: spriteSet(DOG), pal: PALETTES.grep, speed: 44, digT: rand(6, 14), carrying: null });
+      Object.assign(base, { speed: 44, digT: rand(6, 14), carrying: null });
     } else if (kind === 'heisenbug') {
       Object.assign(base, {
-        name: 'Heisenbug', sprites: spriteSet({ walk1: FISH.swim1, walk2: FISH.swim2 }),
-        pal: PALETTES.heisenbug, state: 'swim', speed: 16,
+        state: 'swim', speed: 16,
         fy: 0, fdir: Math.random() < 0.5 ? 1 : -1, flipped: false, teleportT: rand(2, 5),
       });
     }
@@ -1600,9 +1639,21 @@
     const watched = world.observedOverride != null ? world.observedOverride : mouseRecent;
     world.observed = !document.hidden && watched;
 
-    // sessions -> pets, land pets first, the fish only if we run out
-    const assignable = world.pets.filter((p) => p.kind !== 'heisenbug')
-      .concat(world.pets.filter((p) => p.kind === 'heisenbug'));
+    /*
+     * sessions -> pets, land pets first, the fish only if we run out.
+     *
+     * That reshuffle is a *default*, not a rule, and it has to stop being
+     * applied the moment someone states an order — a user who drags Heisenbug to
+     * the top of the Pets window and watches her stay last has been told the list
+     * is theirs and then shown it is not. So an explicit roster is honoured
+     * verbatim, and world.pets order is the only thing that decides. The default
+     * roster the host builds already ends with the fish, so nothing moves for
+     * anyone who never opens the window.
+     */
+    const assignable = world.roster
+      ? world.pets.slice()
+      : world.pets.filter((p) => p.kind !== 'heisenbug')
+        .concat(world.pets.filter((p) => p.kind === 'heisenbug'));
     bindSessions(world, assignable);
     if (world.ball.held && world.ball.held.hidden) {
       world.ball.held = null;
@@ -1765,6 +1816,8 @@
     world.ctx = canvas.getContext('2d');
 
     const customDefs = opts.customPets.concat(opts.loadStored ? loadStoredCustoms() : []).filter(validCustom);
+    // remembered by name so setRoster can build one back after it was switched off
+    for (const def of customDefs) world.customDefs.set(def.name || 'Pet', def);
 
     function spread() {
       const total = opts.pets.length + customDefs.length;
@@ -1904,6 +1957,82 @@
     // one visible pet per session (used by the desktop overlay); with zero
     // sessions the whole team stays out
     setFollowMode(on) { if (this._world) this._world.followMode = !!on; },
+    /*
+     * Who is on the team, and in what order sessions reach them.
+     *
+     * `ids` are built-in kinds ('segfault') and custom pet names ('Yoda'), and
+     * the order is load-bearing: it is the order bindSessions walks, so position
+     * one takes the first session. Setting it at all switches off the fish-last
+     * reshuffle in stepWorld — see the comment there.
+     *
+     * A pet already out is *reused*, never rebuilt, which is the whole reason
+     * this is a roster rather than a remount: reordering the list while four
+     * sessions are live must not move anybody on screen or reset a carry in
+     * progress. Only genuinely new pets are constructed, and only genuinely
+     * removed ones are dropped.
+     *
+     * `opts.rebind` is what makes a stated reorder *visible*, and it is opt-in
+     * for a reason. The array order sets draw order and who takes the **next**
+     * session — it does not decide where a pet stands, and bindSessions is
+     * deliberately sticky, so a pet keeps the session it already holds. Reordering
+     * alone therefore changes nothing anyone can see: drag Heisenbug to the top
+     * with four conversations live and every nameplate stays exactly where it was.
+     * That is what this looked like when it was reported — the order "not
+     * applying" until Follow Claude Code sessions was toggled, which clears the
+     * session list and re-announces it, dealing everyone out again.
+     *
+     * So a reorder the user asked for drops the bindings and lets the next frame
+     * deal them down the new list. Only when asked, though: the roster is also
+     * re-applied at launch and every time the Pets window is focused, and
+     * re-dealing there would shuffle conversations between pets for no reason
+     * that is on screen.
+     */
+    setRoster(ids, opts) {
+      const w = this._world;
+      if (!w || !Array.isArray(ids)) return;
+      const existing = new Map(w.pets.map((p) => [petId(p), p]));
+      const next = [];
+      for (const id of ids) {
+        const had = existing.get(id);
+        if (had) { next.push(had); continue; }
+        const x = rand(20, Math.max(40, w.w - 120));
+        if (BUILT_IN_KINDS.includes(id)) next.push(makePet(w, id, x));
+        else if (w.customDefs.has(id)) next.push(makeCustomPet(w, w.customDefs.get(id), x));
+        // an id for a pet this world has never heard of is skipped rather than
+        // thrown on: the config outlives any one release, and a stale name in it
+        // must not take the lane down
+      }
+      w.roster = ids.slice();
+      w.pets = next;
+      // a reorder the user performed: let the next frame deal the live sessions
+      // down the new list, rather than leaving every pet holding what it had
+      if (opts && opts.rebind) for (const p of next) p.session = null;
+      /*
+       * A pet that just left cannot go on holding the ball, a deadlock or the
+       * pointer. Each of those is a reference kept outside world.pets, and the
+       * existing guards next to bindSessions do not cover this: they trigger on
+       * `hidden`, and a pet taken off the roster is not hidden — it is gone, so
+       * nothing will ever set that flag on it again.
+       *
+       * The deadlock case has to free the pet that stayed, not just forget the
+       * pair. Two cats freeze until one gives up, and the one still on the lane
+       * would otherwise stand there in `deadlock` for ever, waiting for an animal
+       * that no longer exists.
+       */
+      if (w.ball.held && !next.includes(w.ball.held)) {
+        w.ball.held.carrying = null;
+        w.ball.held = null;
+        w.ball.vx = 0;
+        w.ball.vy = 0;
+      }
+      if (w.deadlock && (!next.includes(w.deadlock.a) || !next.includes(w.deadlock.b))) {
+        for (const p of [w.deadlock.a, w.deadlock.b]) {
+          if (next.includes(p)) { p.state = 'walk'; p.stateT = rand(1, 3); }
+        }
+        w.deadlock = null;
+      }
+      if (w.grab && !next.includes(w.grab.pet)) w.grab = null;
+    },
     // horizontal centre of the visible pet holding a session, or null when no
     // pet does. The overlay raises approval cards here, so the card and the
     // clickable pet can never disagree about who asked.
@@ -1944,11 +2073,29 @@
         }
       }
     },
+    /*
+     * Remember a custom pet without putting it out.
+     *
+     * The desktop overlay uses this rather than addCustomPet, so that who is
+     * actually on the lane is decided by exactly one thing — the roster. Adding
+     * the pet here as well would mean two sources of truth: a pet switched off in
+     * the Pets window would still be added on load and then removed a moment
+     * later, and a pet drawn in the editor would appear twice if the defs were
+     * ever re-sent.
+     */
+    registerCustomPet(def) {
+      if (!validCustom(def)) return false;
+      if (this._world) this._world.customDefs.set(def.name || 'Pet', def);
+      return true;
+    },
     // live-add a custom pet; persist=true also saves it for future mounts
     addCustomPet(def, persist) {
       if (!validCustom(def)) throw new Error('strays: invalid pet def (needs grids.walk1 + palette)');
       const w = this._world;
-      if (w) w.pets.push(makeCustomPet(w, def, rand(20, Math.max(40, w.w - 120))));
+      if (w) {
+        w.customDefs.set(def.name || 'Pet', def);
+        w.pets.push(makeCustomPet(w, def, rand(20, Math.max(40, w.w - 120))));
+      }
       if (persist) {
         const all = loadStoredCustoms().filter((d) => d.name !== def.name);
         all.push(def);
@@ -1963,6 +2110,21 @@
       } catch { /* private mode */ }
     },
     listCustomPets: loadStoredCustoms,
+    /*
+     * The built-in team as art rather than as behaviour: [{ id, name, grids,
+     * palette }], in the order sessions reach them by default. The Pets window
+     * draws each row's real sprite from this, so a roster is animals and not a
+     * list of words. Kept a copy so a caller cannot reach in and mutate the
+     * palettes the sprite cache is keyed on.
+     */
+    builtIns() {
+      return BUILT_IN_KINDS.map((id) => ({
+        id,
+        name: BUILT_IN_ART[id].name,
+        grids: BUILT_IN_ART[id].grids,
+        palette: BUILT_IN_ART[id].pal,
+      }));
+    },
     // render a grid+palette to a canvas with the Crew-style outline (editor uses this)
     renderSprite: renderSpriteCanvas,
     destroy() {

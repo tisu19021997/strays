@@ -12,8 +12,11 @@ strays.js            the whole engine — zero dependencies, vanilla canvas
 index.html           demo / landing page
 editor.html          pixel editor + PNG import for custom pets
 desktop/main.js      Electron overlay window, tray, IPC
-desktop/preload.js   the only bridge between the window and the main process
+desktop/preload.js   the lane's bridge to the main process
 desktop/overlay.js   renderer: pets + Allow/Deny cards
+desktop/pets-window.html/.js  the Pets window: who's on the team, in what order
+desktop/pets-preload.js       its bridge — deliberately not the lane's
+desktop/pet-roster.js         config + what exists -> the ordered team (pure)
 desktop/watcher.js   per-session states from ~/.claude/projects
 desktop/approvals.js the pending/replies directories, watched
 desktop/permissions.js  would Claude Code prompt? (pure — the heart of it)
@@ -174,6 +177,56 @@ in the lane is painted white.
 
 - **An unrecognised permission mode must stay silent.** See
   [approvals.md](approvals.md). Never "fix" the unknown-mode branch to gate.
+
+- **`bindSessions` has two orderings, and the second one exists so the Pets
+  window is not lying.** Sessions are handed to the first free pet in
+  `world.pets` order, and that order used to be reshuffled on the way in —
+  `filter(kind !== 'heisenbug')` then the fish — because she is the fallback pet.
+  A user who drags Heisenbug to the top of the Pets window and watches her stay
+  last has been told the list is theirs and then shown it is not. So an explicit
+  roster is honoured **verbatim** and the reshuffle only applies when
+  `world.roster` is null, which is the browser build. Nothing moved for existing
+  users because the default roster `pet-roster.js` builds already ends with the
+  fish — that equivalence is pinned by *"customs sit between the land pets and the
+  fish, as the old filter had it"*, and it is the assertion to look at first if
+  anyone's team ever reorders on upgrade.
+
+- **A reorder the user performed has to re-deal the sessions; one the host
+  re-applies must not.** The array order sets draw order and who takes the *next*
+  session — not where a pet stands — and `bindSessions` is sticky, so a drag with
+  conversations already live changed nothing anybody could see. It read as the Pets
+  window being broken, and the workaround people found was toggling *Follow Claude
+  Code sessions*, which clears the session list and re-announces it, re-dealing
+  everyone by accident. `setRoster(ids, { rebind: true })` is the fix and it is
+  opt-in: `applyRoster()` also runs at launch and on every focus of the Pets
+  window, and re-dealing conversations because a window got focus is worse than the
+  bug it would be fixing. The lesson is that the two halves are separate
+  requirements that look like one — the suite had only the sticky half, and it
+  passed.
+
+- **Reordering the roster must still not be a remount.** `setRoster` reuses the
+  pets already out and only builds genuinely new ones, because a settings change
+  that teleports four pets is worse than no setting.
+  Three references are kept *outside* `world.pets` and all three go stale when a
+  pet is switched off: the ball, a deadlock, and the pointer's grab. The guards
+  next to `bindSessions` do not cover it — they fire on `hidden`, and a pet off the
+  roster is not hidden, it is gone, so nothing will ever set that flag on it
+  again. The deadlock case has to free the pet that *stayed*, or a cat stands
+  there in `deadlock` for ever waiting for an animal that no longer exists.
+
+  Worth knowing how that one was found. The first version of the test set up all
+  three references and then picked the pet up — and passed with the cleanup
+  deleted, because `grabPet` already drops the ball and breaks the deadlock. Two
+  thirds of it was checking work the drag had done. Three separate tests, none of
+  which carries the pet, is what actually killed the mutants.
+
+- **Registering a custom pet and putting it out are separate calls.**
+  `registerCustomPet` only remembers the def; the roster decides who is on the
+  lane. One thing deciding rather than two is the whole point: with
+  `addCustomPet` on that path, a pet switched off in the window would be added on
+  load and removed a frame later, and re-sending the defs — which `applyRoster`
+  does every time, so a pet drawn in the editor appears without a restart — would
+  double it up.
 
 - **How old a session is comes from the timestamps inside its transcript, not
   from the file's mtime.** Claude Code rewrites a transcript to record a

@@ -9,6 +9,10 @@ Open `editor.html` in a browser:
 - **export JSON** and save it to `~/.strays/custom-pets.json` so the desktop
   overlay picks it up too (the file holds an array of pet definitions)
 
+Then open 🐾 → **Pets…**. Your pet is in the list, marked **custom**, and joins the
+lane as soon as that window has been looked at — no restart. Drag it up the list to
+decide how early it gets a session; the pet at the top takes the first one.
+
 ## A pet is just JSON
 
 ```json
@@ -57,3 +61,21 @@ Strays.removeCustomPet('Nullptr');
 ```
 
 Adopted pets are stored under the `strays.custom` key in `localStorage`.
+
+## The team, and its order
+
+`Strays.setRoster(ids)` says who is out and in what order sessions reach them —
+built-ins by kind (`'segfault'`, `'grep'`, `'mutex'`, `'heisenbug'`), yours by name.
+The order is what the Pets window edits, and it is the order sessions are handed
+out in, so `ids[0]` is the pet you see when one Claude window is open.
+
+```js
+Strays.registerCustomPet(def);                  // remember it, but leave it off
+Strays.setRoster(['Nullptr', 'grep', 'mutex']); // and now put it out, first
+Strays.builtIns();                              // [{ id, name, grids, palette }]
+```
+
+`registerCustomPet` is the half of `addCustomPet` that does not put a pet on the
+lane — the desktop overlay uses it so that exactly one thing decides who is out,
+which is the roster. Reordering reuses the pets already there, so a pet keeps its
+position, its state and the session it is carrying.
