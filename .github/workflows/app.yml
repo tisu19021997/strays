@@ -69,13 +69,34 @@ jobs:
           echo "the app runs and installs a self-contained hook"
           hdiutil detach "$MP" -quiet
 
+      # The release page is where the download link lands, so it carries the
+      # install steps rather than assuming anyone reads a README first. They are
+      # not obvious: strays is unsigned, and since macOS 15 the old
+      # right-click → Open shortcut no longer works, which leaves a dialog whose
+      # only buttons are "Move to Trash" and "Done".
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.ref || github.ref_name }}
         run: |
+          cat > notes.md <<'NOTES'
+          ## Install on a Mac
+
+          1. Download the `.dmg` below, open it, and drag **strays** to Applications.
+          2. Double-click strays. macOS refuses and offers **Move to Trash** — don't. Click **Done**.
+          3. Go to **System Settings → Privacy & Security**, scroll to **Security**, and click
+             **Open Anyway** next to *"strays" was blocked to protect your Mac*.
+          4. Click the 🐾 in your menu bar → **Connect to Claude Code**.
+
+          Steps 2 and 3 happen once, ever. strays is not signed by Apple — that costs $99 a year —
+          so macOS asks you to confirm you meant it. If you have a terminal,
+          `xattr -dr com.apple.quarantine /Applications/strays.app` skips both steps.
+
+          Already have Node? `npx claude-strays` needs none of this.
+          NOTES
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            && gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-                 --title "$TAG" --notes "strays $TAG"
+                 --title "$TAG" --notes-file notes.md
           gh release upload "$TAG" dist/*.dmg --repo "$GITHUB_REPOSITORY" --clobber
           echo "attached $(ls dist/*.dmg) to $TAG"

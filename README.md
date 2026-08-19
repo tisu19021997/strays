@@ -77,26 +77,45 @@ nothing about you and it's switchable. There is no telemetry.
 No Terminal, no Node, nothing to install first.
 
 1. Open the `.dmg` and drag **strays** to Applications.
-2. **Right-click it and choose Open** — just the first time. macOS says the app
-   is from an unidentified developer because it isn't signed by Apple; opening it
-   this way once tells macOS you meant it.
-3. Click the 🐾 in your menu bar → **Connect to Claude Code**.
+2. Double-click strays. macOS will refuse to open it and offer you **Move to
+   Trash** — don't. Click **Done**.
+3. Open  → **System Settings → Privacy & Security**, scroll down to
+   **Security**. There's a line saying *"strays" was blocked to protect your
+   Mac.* Click **Open Anyway** next to it and confirm with your password or
+   Touch ID.
+4. strays opens, and every time after this it just opens. Click the 🐾 in your
+   menu bar → **Connect to Claude Code**.
 
-That's the whole setup. strays installs its own Claude Code hooks, keeps any you
-already have, and backs up your settings first. Turn on **Start strays at login**
-in the same menu and you never think about it again.
+Steps 2 and 3 are once, ever. strays then installs its own Claude Code hooks,
+keeps any you already have, and backs up your settings first. Turn on **Start
+strays at login** in the same menu and you never think about it again.
 
 <details>
-<summary>Why the warning, and why the download is 171MB</summary>
+<summary>Why macOS does that, and why the download is 171MB</summary>
 
-Signing an app so macOS opens it without complaint needs a paid Apple Developer
-account. strays is free and has no company behind it, so it ships unsigned and
-asks you for one right-click instead — the same trade the app that inspired it
-makes.
+Because strays isn't signed by Apple. Getting rid of that dialog means paying
+Apple $99 a year for a Developer ID and notarising every build. strays is free
+and has nobody behind it to pay that, so it asks you for four clicks instead.
+
+If you've read older instructions anywhere — including ours, until recently —
+that say to *right-click and choose Open*: that stopped working in macOS 15.
+Apple removed the shortcut, and System Settings is now the only way through.
 
 The size is Electron: strays is the same engine that runs on a web page, wrapped
 in a browser. A native app doing this would be a few megabytes. If that bothers
-you more than a terminal does, `npx claude-strays` below is ~200KB.
+you more than a terminal does, `npx claude-strays` below is about 200KB.
+
+</details>
+
+<details>
+<summary>If you do have a terminal, this skips all of it</summary>
+
+The dialog exists because your browser tags downloads as quarantined. Removing
+the tag is one line, and then strays opens normally:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/strays.app
+```
 
 </details>
 
