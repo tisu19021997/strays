@@ -196,3 +196,50 @@ test('the installed gate matches every tool that can prompt, on the timeout it b
   assert.ok(!('matcher' in recorder), 'SessionStart carries no tool to match on');
   assert.equal(recorder.hooks[0].timeout, 5, 'the recorder writes one small file');
 });
+
+/*
+ * The downloadable app installs the same hooks, but it cannot ask for `node`.
+ *
+ * Claude Code runs a hook by handing its command to a shell, and the people the
+ * app exists for have no node on their PATH for that shell to find. A hook
+ * command naming one does not error — Claude Code carries on, and the only
+ * symptom is approval cards that never appear, which reads as the feature being
+ * broken rather than the install being wrong.
+ */
+const APP_EXEC = '/Applications/strays.app/Contents/MacOS/strays';
+
+test('the app installs a hook that does not need node on the machine', () => {
+  const dir = configDir();
+  const { settings } = install(dir, '--app', APP_EXEC);
+
+  for (const [event, entries] of Object.entries(settings.hooks)) {
+    for (const command of ours(entries)) {
+      assert.ok(!/(^|[^-\w])node\s/.test(command), `${event} must not call node: ${command}`);
+      assert.ok(command.startsWith(`ELECTRON_RUN_AS_NODE=1 "${APP_EXEC}"`),
+        `${event} runs the app as its own node: ${command}`);
+    }
+  }
+});
+
+test('without --app it still writes the command an npm install needs', () => {
+  // the two live side by side: npx and a global install both have node, and
+  // telling them to run an app they have not got would break the older path
+  const dir = configDir();
+  const { settings } = install(dir);
+  const [command] = ours(settings.hooks.PreToolUse);
+
+  assert.match(command, /^node "/, `an npm install gets node: ${command}`);
+  assert.ok(!command.includes('ELECTRON_RUN_AS_NODE'), command);
+});
+
+test('an app install replaces an npm one rather than stacking on it', () => {
+  // someone who tried `npx claude-strays` first and then downloaded the app has
+  // two installers aimed at the same two events
+  const dir = configDir();
+  install(dir);
+  const { settings } = install(dir, '--app', APP_EXEC);
+
+  const mine = ours(settings.hooks.PreToolUse);
+  assert.equal(mine.length, 1, `one gate, not two: ${JSON.stringify(mine)}`);
+  assert.ok(mine[0].includes('ELECTRON_RUN_AS_NODE'), 'and it is the app');
+});

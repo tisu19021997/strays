@@ -4,3 +4,10 @@ node_modules/
 
 # working notes, not part of the project
 .scratch/
+
+# the packaged app: all generated, and the .dmg is 171MB
+dist/
+.build-stage/
+build/icon.png
+build/icon.icns
+build/icon.iconset/

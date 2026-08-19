@@ -1,0 +1,81 @@
+# The downloadable macOS app.
+#
+# Separate from publish.yml because it answers a different question. That one
+# ships the npm package for people who already have Node; this one produces the
+# .dmg for people who do not, and attaches it to the GitHub release the tag
+# already created — which is the download link the README points at.
+#
+# It runs on a macOS runner because the .icns, the universal merge and the .dmg
+# all need macOS tooling, and it is the only job here that installs anything:
+# the suite stays dependency-free, but electron-builder is not something you can
+# do without.
+name: app
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: the tag to build; defaults to whatever triggered the run
+        required: false
+        type: string
+        default: ''
+  # ...and by hand, for a tag whose build failed or predates this workflow
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: the tag to build, e.g. v1.3.3
+        required: true
+        type: string
+
+permissions:
+  contents: write # the release the .dmg is attached to
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # electron-builder needs the electron binary it is going to package, and
+      # that is the only reason this job installs at all
+      - name: Fetch Electron
+        run: npm install --no-audit --no-fund
+
+      - name: Draw the icon
+        run: node tools/make-icon.js
+
+      - name: Build
+        run: node tools/build-app.js
+
+      # An .app that cannot launch looks exactly like one that can until someone
+      # double-clicks it, and the failure this catches — a bundle whose framework
+      # symlinks were flattened — produced a working .dmg beside a dead app.
+      # `--setup` boots Electron for real, so it fails here rather than for a user.
+      - name: The built app has to actually run
+        run: |
+          MP="$(hdiutil attach dist/*.dmg -nobrowse -readonly | grep -o '/Volumes/.*$' | tail -1)"
+          echo "mounted: $MP"
+          TMP="$(mktemp -d)"
+          CLAUDE_CONFIG_DIR="$TMP" "$MP/strays.app/Contents/MacOS/strays" --setup
+          # and the hook it wrote must not need a node on the machine, because
+          # the whole point of this build is the people who have not got one
+          grep -q "ELECTRON_RUN_AS_NODE" "$TMP/settings.json"
+          echo "the app runs and installs a self-contained hook"
+          hdiutil detach "$MP" -quiet
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --title "$TAG" --notes "strays $TAG"
+          gh release upload "$TAG" dist/*.dmg --repo "$GITHUB_REPOSITORY" --clobber
+          echo "attached $(ls dist/*.dmg) to $TAG"

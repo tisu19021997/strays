@@ -1,0 +1,79 @@
+# The downloadable macOS app.
+#
+# strays ships two ways and they are not in competition: `npx claude-strays` for
+# anyone who already has Node, and this for everyone who does not. The npm
+# package is still the repo root, unchanged — nothing here is a dependency of it,
+# and electron-builder is fetched by the build workflow rather than installed,
+# so a checkout stays dependency-free and `node --test` still runs against a bare
+# one.
+#
+# Not signed, deliberately: notarising needs a paid Apple Developer account, and
+# the app it is modelled on ships ad-hoc signed too. That costs the user one
+# right-click → Open the first time, which the download page spells out. An
+# ad-hoc signature is not optional though — an unsigned arm64 binary will not
+# launch at all on Apple Silicon.
+appId: dev.strays.overlay
+productName: strays
+copyright: MIT © strays
+
+directories:
+  output: dist
+  buildResources: build
+
+# The npm package has no `main` — it is a command, not a library — so the app's
+# entry point is injected here rather than written into package.json, where it
+# would change what `require('claude-strays')` means for no reason.
+extraMetadata:
+  main: desktop/main.js
+
+files:
+  - desktop/**/*
+  - '!desktop/test/**'
+  - strays.js
+  - editor.html
+  - LICENSE
+
+# Left unpacked on purpose. Claude Code runs the approval hooks by spawning the
+# command written into ~/.claude/settings.json, so the hook scripts have to be
+# real paths on disk that a shell can point at — see hookCommand() in
+# setup-hooks.js. Inside an asar they would only resolve to a process that
+# already had Electron's patched fs, which is a sharp edge for no gain on an app
+# this size.
+asar: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  # ad-hoc, exactly as the app this one learned from does it
+  identity: null
+  # notarisation would need a Developer ID, and hardening without one buys
+  # nothing but a longer build
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+  extendInfo:
+    # a menu-bar app: no Dock icon, no app switcher entry. main.js also calls
+    # app.dock.hide(), but doing it in the plist as well avoids the icon
+    # appearing for the moment before the first line of JS runs.
+    LSUIElement: true
+    # jumping to a session drives the Claude app with AppleScript, and macOS
+    # will not allow that silently — this is the sentence in the permission
+    # dialog the user is asked to accept
+    NSAppleEventsUsageDescription: >-
+      strays needs this to bring a Claude Code conversation to the front when
+      you click its pet.
+
+dmg:
+  title: strays ${version}
+  # the one instruction that matters, on the window they are already looking at
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications

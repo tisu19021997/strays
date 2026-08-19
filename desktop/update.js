@@ -83,6 +83,9 @@ function latestFromRegistry(body) {
  */
 function installKind(dir = __dirname) {
   const p = dir.replace(/\\/g, '/');
+  // the downloadable app, which has no npm anywhere in the picture: there is no
+  // command to give someone who never typed one, so it gets a page instead
+  if (p.includes('.app/Contents/Resources/')) return 'app';
   if (p.includes('/_npx/')) return 'npx';
   if (p.includes('/node_modules/' + PACKAGE + '/')) return 'global';
   return 'checkout';
@@ -91,6 +94,7 @@ function installKind(dir = __dirname) {
 /* the one command that applies, or null when there is nothing to run */
 function updateCommand(kind) {
   if (kind === 'npx') return null;             // already gets the latest each run
+  if (kind === 'app') return null;             // a download, not a command
   if (kind === 'checkout') return 'git pull';
   return `npm install -g ${PACKAGE}@latest`;
 }
@@ -103,11 +107,15 @@ function updateNotice(current, latest, kind) {
   return {
     version: next,
     label: `Update available — ${next}`,
-    // npx users are already current next time they run it; everyone else has a
-    // command, and the menu offers to copy it rather than running it for them
-    detail: command
-      ? `You have ${current}. Run: ${command}`
-      : `You have ${current}. Your next \`npx ${PACKAGE}\` picks it up.`,
+    /*
+     * Three kinds of person, three sentences. Someone with a command gets it to
+     * copy; an npx user is already current next time they run it; and someone
+     * who downloaded the app has no terminal in the story at all, so telling
+     * them to run anything would be the one instruction they cannot follow.
+     */
+    detail: command ? `You have ${current}. Run: ${command}`
+      : kind === 'app' ? `You have ${current}. Download ${next} from the strays releases page.`
+        : `You have ${current}. Your next \`npx ${PACKAGE}\` picks it up.`,
     command,
   };
 }

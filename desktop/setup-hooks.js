@@ -76,6 +76,28 @@ const isOurs = (entry) =>
   entry.hooks.some((h) => typeof h.command === 'string' &&
     (h.command.includes(SENTINEL) || LEGACY_MARKERS.some((m) => h.command.includes(m))));
 
+/*
+ * What Claude Code should actually run for a hook.
+ *
+ * `node "<script>"` is right for every install that arrived through npm, because
+ * having npm means having node. It is wrong for the downloadable app, whose
+ * whole reason to exist is people who have neither: Claude Code runs a hook by
+ * handing the command to a shell, and on those machines there is no `node` on
+ * the PATH for the shell to find. The app does ship a Node — Electron is one,
+ * and ELECTRON_RUN_AS_NODE makes its own binary behave as one.
+ *
+ * Which it is comes in as `--app <path-to-the-executable>` rather than being
+ * sniffed out of process.execPath, because the caller always knows and a guess
+ * here fails silently: a wrong hook command does not error, it just means
+ * approval cards that never appear, for a reason nothing on screen explains.
+ */
+const appArg = process.argv.indexOf('--app');
+const APP_EXEC = appArg >= 0 ? process.argv[appArg + 1] : null;
+
+const hookCommand = (script) => (APP_EXEC
+  ? `ELECTRON_RUN_AS_NODE=1 "${APP_EXEC}" "${script}" ${SENTINEL}`
+  : `node "${script}" ${SENTINEL}`);
+
 settings.hooks = settings.hooks || {};
 
 for (const hook of HOOKS) {
@@ -92,7 +114,7 @@ for (const hook of HOOKS) {
   } else {
     kept.push({
       ...(hook.matcher ? { matcher: hook.matcher } : {}),
-      hooks: [{ type: 'command', command: `node "${script}" ${SENTINEL}`, timeout: hook.timeout }],
+      hooks: [{ type: 'command', command: hookCommand(script), timeout: hook.timeout }],
     });
     console.log(`${dropped ? 'replaced' : 'installed'} the ${hook.what}: ${script}`);
   }

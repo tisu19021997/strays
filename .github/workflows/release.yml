@@ -119,3 +119,13 @@ jobs:
     with:
       ref: ${{ needs.release.outputs.tag }}
     secrets: inherit
+
+  # The .dmg for people who have no Node, built alongside the package for people
+  # who have. Deliberately not `needs: publish` — the two are independent, and a
+  # registry problem should not also cost the download.
+  app:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    uses: ./.github/workflows/app.yml
+    with:
+      ref: ${{ needs.release.outputs.tag }}

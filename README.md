@@ -70,6 +70,38 @@ nothing about you and it's switchable. There is no telemetry.
 
 ## Get them
 
+### Just want the app? (macOS)
+
+**[Download strays for Mac ⬇](https://github.com/tisu19021997/strays/releases/latest)**
+
+No Terminal, no Node, nothing to install first.
+
+1. Open the `.dmg` and drag **strays** to Applications.
+2. **Right-click it and choose Open** — just the first time. macOS says the app
+   is from an unidentified developer because it isn't signed by Apple; opening it
+   this way once tells macOS you meant it.
+3. Click the 🐾 in your menu bar → **Connect to Claude Code**.
+
+That's the whole setup. strays installs its own Claude Code hooks, keeps any you
+already have, and backs up your settings first. Turn on **Start strays at login**
+in the same menu and you never think about it again.
+
+<details>
+<summary>Why the warning, and why the download is 171MB</summary>
+
+Signing an app so macOS opens it without complaint needs a paid Apple Developer
+account. strays is free and has no company behind it, so it ships unsigned and
+asks you for one right-click instead — the same trade the app that inspired it
+makes.
+
+The size is Electron: strays is the same engine that runs on a web page, wrapped
+in a browser. A native app doing this would be a few megabytes. If that bothers
+you more than a terminal does, `npx claude-strays` below is ~200KB.
+
+</details>
+
+### Or from the command line
+
 One command, same on macOS, Windows and Linux. You need
 [Node.js](https://nodejs.org) 18 or newer; nothing else.
 

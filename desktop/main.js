@@ -11,7 +11,7 @@
  *   - tap a pet -> its own conversation comes to the front (macOS)
  *   - Allow/Deny approval cards, via the PreToolUse gate (npm run hooks)
  */
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, powerMonitor, clipboard } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, powerMonitor, clipboard, dialog, shell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -37,6 +37,9 @@ const STRIP_HEIGHT = 190;
 
 /* the renderer renews its claim on this beat, well inside the guard's lease */
 const POINTER_SWEEP_MS = 500;
+
+/* where a downloaded copy goes to become a newer downloaded copy */
+const RELEASES_URL = 'https://github.com/tisu19021997/strays/releases/latest';
 
 /*
  * Untouched for this long and you have actually left, so Heisenbug may wander.
@@ -94,6 +97,54 @@ const approvals = new Approvals({
   onRemove: (id) => send('approval-remove', id),
   debug,
 });
+
+/*
+ * The Claude Code hooks, installed and removed from the menu bar.
+ *
+ * Everything here has a command-line equivalent (`strays hooks`), and for anyone
+ * who arrived through npm that is still the way. This exists because the
+ * downloadable app is aimed at people with no terminal, and a feature that can
+ * only be switched on by typing is, for them, not a feature.
+ */
+const CLAUDE_SETTINGS = path.join(
+  process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+
+function hooksInstalled() {
+  try {
+    return JSON.stringify(JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8')).hooks || {})
+      .includes('--strays-hook');
+  } catch { return false; }
+}
+
+function connectToClaudeCode(install) {
+  const args = [path.join(__dirname, 'setup-hooks.js')];
+  if (!install) args.push('--remove');
+  // the app runs its own hooks: see hookCommand() in setup-hooks.js
+  if (app.isPackaged) args.push('--app', process.execPath);
+
+  const out = require('child_process').spawnSync(process.execPath, args, {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf8',
+  });
+  const ok = out.status === 0;
+  debug('[hooks]', install ? 'install' : 'remove', ok ? 'ok' : out.stderr);
+  rebuildTrayMenu();
+
+  dialog.showMessageBox({
+    type: ok ? 'info' : 'error',
+    message: ok
+      ? (install ? 'Connected to Claude Code' : 'Disconnected from Claude Code')
+      : 'Could not change the hooks',
+    // hooks are read once, when a session starts — without this sentence the
+    // feature looks broken to anyone with Claude Code already open
+    detail: ok
+      ? (install
+        ? 'Approval cards are ready. Claude Code reads its hooks when a conversation starts, so restart any you already have open.\n\nYour previous settings were backed up first.'
+        : 'The hooks have been removed. Conversations already open keep them until they are restarted.')
+      : (out.stderr || 'Unknown error').trim(),
+    buttons: ['OK'],
+  });
+}
 
 /*
  * The lane, in screen coordinates: the full width of the primary display, and
@@ -272,6 +323,22 @@ function rebuildTrayMenu() {
         else { try { fs.unlinkSync(APPROVALS_FLAG); } catch { /* gone */ } }
       },
     },
+    /*
+     * ...and the half of that which used to need a terminal. `strays hooks` is
+     * not an instruction that can be given to someone who downloaded an app, so
+     * the app installs its own — writing a hook command that runs this binary as
+     * a Node, because their machine has none.
+     */
+    {
+      label: hooksInstalled() ? 'Disconnect from Claude Code' : 'Connect to Claude Code…',
+      click: () => connectToClaudeCode(!hooksInstalled()),
+    },
+    {
+      label: 'Start strays at login',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, openAsHidden: true }),
+    },
     {
       label: 'Party mode',
       type: 'checkbox',
@@ -301,6 +368,12 @@ function rebuildTrayMenu() {
       ...(updateNotice.command ? [{
         label: 'Copy the update command',
         click: () => clipboard.writeText(updateNotice.command),
+      }] : []),
+      // ...and for the downloadable app there is no command to copy, so the
+      // menu opens the page the new one is on instead
+      ...(app.isPackaged && !updateNotice.command ? [{
+        label: 'Open the download page',
+        click: () => shell.openExternal(RELEASES_URL),
       }] : []),
       {
         label: "Don't check for updates",
@@ -415,6 +488,30 @@ function jumpToSession(session) {
  * arbitrary one and leaves the rest, and the approval gate reads that same file
  * to decide whether anyone is listening.
  */
+/*
+ * `strays.app --setup` — install the Claude Code hooks and exit.
+ *
+ * The downloadable app exists for people who have no terminal and no Node, so
+ * "run `strays hooks`" is not an instruction that can be given to them. This is
+ * the same installer the command runs, told to write a hook command that invokes
+ * this very binary as a Node rather than a `node` that is not on their machine.
+ *
+ * Before the single-instance lock, and before whenReady: it is a one-shot that
+ * must work whether or not an overlay is already out.
+ */
+if (process.argv.includes('--setup') || process.argv.includes('--unhook')) {
+  const args = [path.join(__dirname, 'setup-hooks.js')];
+  if (process.argv.includes('--unhook')) args.push('--remove');
+  if (app.isPackaged) args.push('--app', process.execPath);
+  const out = require('child_process').spawnSync(process.execPath, args, {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf8',
+  });
+  process.stdout.write(out.stdout || '');
+  process.stderr.write(out.stderr || '');
+  app.exit(out.status === 0 ? 0 : 1);
+}
+
 if (!app.requestSingleInstanceLock()) {
   debug('[boot] another overlay is already running — leaving it to it');
   app.quit();
@@ -422,7 +519,48 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('second-instance', () => debug('[boot] refused a second overlay'));
 
+/*
+ * Get out of the disk image before doing anything else.
+ *
+ * Running strays straight from the mounted .dmg mostly works, which is the
+ * problem: the hooks it installs name the path it is running from, so they point
+ * into /Volumes/strays — and the first time the image is ejected, every approval
+ * silently stops working with nothing on screen to explain it. macOS offers the
+ * move itself, so this is the whole of the "install" step for someone who has
+ * never dragged an app to Applications.
+ */
+function moveOutOfTheDiskImage() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return false;
+  if (app.isInApplicationsFolder()) return false;
+  if (!/^\/Volumes\//.test(app.getPath('exe'))) return false; // in Downloads is their business
+
+  const { response } = dialog.showMessageBoxSync
+    ? { response: dialog.showMessageBoxSync({
+      type: 'question',
+      message: 'Move strays to your Applications folder?',
+      detail: 'strays is running from its disk image. It needs to live in Applications, '
+            + 'or it will stop working when the image is ejected.',
+      buttons: ['Move to Applications', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+    }) }
+    : { response: 1 };
+  if (response !== 0) return false;
+
+  try { return app.moveToApplicationsFolder(); } catch (e) {
+    dialog.showMessageBox({
+      type: 'error',
+      message: 'Could not move strays',
+      detail: (e && e.message) || 'Drag strays.app into Applications yourself, then open it again.',
+    });
+    return false;
+  }
+}
+
 app.whenReady().then(() => {
+  // moveToApplicationsFolder relaunches from the new location and quits this
+  // copy, so nothing below should run in the instance that moved
+  if (moveOutOfTheDiskImage()) return;
   if (process.platform === 'darwin') app.dock.hide();
   approvals.ensureDirs();
   createWindow();
