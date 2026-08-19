@@ -62,6 +62,8 @@ const AWAY_SECONDS = 5 * 60;
 
 const BASE_DIR = path.join(os.homedir(), '.strays');
 const CUSTOM_PETS_FILE = path.join(BASE_DIR, 'custom-pets.json');
+/* the pets that ship with strays — guests, so they arrive switched off */
+const BUNDLED_PETS_FILE = path.join(__dirname, '..', 'pets', 'bundled.json');
 const APPROVALS_FLAG = path.join(BASE_DIR, 'approvals-on');
 const ALIVE_FILE = path.join(BASE_DIR, 'overlay.alive');
 const PENDING_DIR = path.join(BASE_DIR, 'pending');
@@ -440,25 +442,50 @@ function writeConfig(patch) {
  * a pet can be drawn in the editor while the window is open, and the file is the
  * only place that says so.
  */
-function readCustomDefs() {
+function readDefs(file) {
   try {
-    const defs = JSON.parse(fs.readFileSync(CUSTOM_PETS_FILE, 'utf8'));
+    const defs = JSON.parse(fs.readFileSync(file, 'utf8'));
     return Array.isArray(defs) ? defs.filter((d) => d && d.name) : [];
-  } catch { return []; /* no custom pets — fine */ }
+  } catch { return []; /* absent or malformed — a pet file must not stop the app */ }
+}
+
+/*
+ * Every pet that is not built in: the ones that ship with strays, then the ones
+ * in ~/.strays/custom-pets.json.
+ *
+ * Keyed by name, and the user's file is applied second, so editing a bundled pet
+ * in custom-pets.json *replaces* it rather than putting a second animal of the
+ * same name on the lane — which the roster could not tell apart, since a custom
+ * pet's name is its id.
+ *
+ * `bundled` comes back separately because those arrive switched off. The four
+ * animals are the team; these are guests.
+ */
+function readPetDefs() {
+  const bundled = readDefs(BUNDLED_PETS_FILE);
+  const byName = new Map(bundled.map((d) => [d.name, d]));
+  for (const def of readDefs(CUSTOM_PETS_FILE)) byName.set(def.name, def);
+  const bundledNames = new Set(bundled.map((d) => d.name));
+  return { defs: [...byName.values()], bundled: [...bundledNames] };
 }
 
 function currentRoster() {
   const builtIns = Strays.builtIns();
-  const customs = readCustomDefs();
+  const { defs, bundled } = readPetDefs();
   const resolved = resolveRoster(readConfig().pets, {
     builtIns: builtIns.map((p) => p.id),
-    customs: customs.map((d) => d.name),
+    customs: defs.map((d) => d.name),
+    // a guest is off until asked in, but only while the config has never had an
+    // opinion about it — otherwise switching one on would not survive a restart
+    defaultOff: bundled,
   });
   // art for every row, so the window can draw the pet rather than name it
+  const guests = new Set(bundled);
   const art = new Map([
-    ...builtIns.map((p) => [p.id, { ...p, custom: false }]),
-    ...customs.map((d) => [d.name, {
-      id: d.name, name: d.name, custom: true, grids: d.grids, palette: d.palette,
+    ...builtIns.map((p) => [p.id, { ...p, custom: false, bundled: false }]),
+    ...defs.map((d) => [d.name, {
+      id: d.name, name: d.name, custom: true, bundled: guests.has(d.name),
+      grids: d.grids, palette: d.palette,
     }]),
   ]);
   return { ...resolved, pets: resolved.order.map((id) => art.get(id)).filter(Boolean) };
@@ -473,7 +500,7 @@ function currentRoster() {
  * documented limitation rather than a choice.
  */
 function applyRoster(opts) {
-  const defs = readCustomDefs();
+  const { defs } = readPetDefs();
   if (defs.length) send('custom-pets', defs);
   const { enabled } = currentRoster();
   /*

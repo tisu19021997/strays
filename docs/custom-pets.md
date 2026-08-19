@@ -1,5 +1,24 @@
 # Designing your own pet
 
+## The five that ship
+
+`pets/bundled.json` carries Yoda, Rick, Morty, BMO and SpongeBob. They are
+**guests**: on the list in 🐾 → **Pets…** badged `GUEST`, switched off until you
+ask one in, and never counted as part of the team of four.
+
+Fan pixel art drawn for this project, and not affiliated with or endorsed by
+anyone; all characters remain the property of their respective rights holders.
+
+To change one, copy it into `~/.strays/custom-pets.json` and edit it there — the
+loader keys on name and applies your file second, so yours replaces the shipped
+one rather than putting two animals of the same name on the lane. To regenerate
+the shipped file after editing `pets/build.js`:
+
+```bash
+node pets/build.js
+node .claude/skills/strays-pet/scripts/preview.js pets/bundled.json 0
+```
+
 Open `editor.html` in a browser:
 
 - paint two walk frames on the pixel grid — a dark outline is added for you — or

@@ -29,6 +29,7 @@
     "bin/",
     "desktop/",
     "!desktop/test/",
+    "pets/bundled.json",
     "strays.js",
     "editor.html",
     "index.html",

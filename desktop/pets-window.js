@@ -65,11 +65,19 @@ function rowEl(pet, index) {
   const nameText = document.createElement('span');
   nameText.textContent = pet.name;
   name.appendChild(nameText);
+  /*
+   * Two kinds of not-built-in, and they are worth telling apart: a guest ships
+   * with strays and starts switched off, a custom one you drew yourself. Same
+   * mechanism, different provenance, and "CUSTOM" on a pet the user has never
+   * touched would be a small lie.
+   */
   if (pet.custom) {
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = 'CUSTOM';
-    badge.title = 'Yours — from ~/.strays/custom-pets.json';
+    badge.textContent = pet.bundled ? 'GUEST' : 'CUSTOM';
+    badge.title = pet.bundled
+      ? 'Ships with strays. Copy it into ~/.strays/custom-pets.json to change it.'
+      : 'Yours — from ~/.strays/custom-pets.json';
     name.appendChild(badge);
   }
   const slot = document.createElement('div');

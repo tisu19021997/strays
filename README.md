@@ -29,7 +29,23 @@ met. None of them can be fixed. That's fine — they're not here to be fixed.
 | 🐈 | **Mutex** | Also a cat. Two cats cannot pass each other, so when he meets Segfault they both freeze until one of them gives up. Otherwise: asleep. |
 | 🐠 | **Heisenbug** | A fish in a little space helmet. Only misbehaves when you're not looking. She also quietly counts what today has cost you, and will mention it. |
 
-Want a fifth? [Draw one.](#make-your-own)
+Want a fifth? [Draw one.](#make-your-own) — or let one of the guests in.
+
+### And five guests
+
+They ship with strays and start switched off, because the four above are the
+point. Turn one on in 🐾 → **Pets…**, where they're badged `GUEST`.
+
+|     | who |
+| --- | --- |
+| 🟩 | **Yoda** |
+| 🔵 | **Rick** |
+| 🟡 | **Morty** |
+| 🟦 | **BMO** |
+| 🟨 | **SpongeBob** |
+
+Fan pixel art, drawn for this project. Not affiliated with or endorsed by their
+owners; all characters remain the property of their respective rights holders.
 
 ## What they actually do
 
@@ -263,7 +279,8 @@ wanders, party mode — moved into the Pets window.
 <img src="docs/pets-window.png" alt="The Pets window: each pet drawn as itself, with a checkbox and a drag handle" width="380">
 
 Each pet is drawn as itself, so you're picking animals rather than reading a list
-of names. Yours are marked **custom**.
+of names. The ones that ship with strays are marked `GUEST` and start off; the
+ones you drew are marked `CUSTOM`.
 
 - **Uncheck a pet** and it leaves the lane.
 - **Drag to reorder**, and the order is the thing that matters: the pet at the

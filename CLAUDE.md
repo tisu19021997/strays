@@ -13,6 +13,7 @@ strays/
 ├── strays.js           the whole engine — sprites, behaviour, canvas, public API
 ├── index.html          demo / landing page
 ├── editor.html         pixel editor + PNG import for custom pets
+├── pets/bundled.json   the five guests that ship — built by pets/build.js
 ├── desktop/            Electron overlay: window, tray, watcher, approval gate
 │   ├── pets-window.*   the Pets window — who is on the team, in what order
 │   ├── pet-roster.js   config + what exists -> the ordered team (pure)
@@ -54,8 +55,9 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   every sprite. Drawing your own doubles it.
 - Adopt in a browser with `Strays.addCustomPet(def, true)` — persists to
   `localStorage` under `strays.custom`. For the desktop overlay, append to the
-  array in `~/.strays/custom-pets.json`; it is read **at launch only**, so
-  restart the overlay after editing.
+  array in `~/.strays/custom-pets.json`; it is re-read at launch **and** whenever
+  the Pets window is focused, so a pet drawn in the editor joins the lane without
+  a restart. (It used to be launch-only; `applyRoster` re-sends the defs.)
 - Copy the `CAT`, `DOG` or `FISH` grids at the top of `strays.js` as a starting
   point; per-pet behaviour lives further down in the same file.
 
@@ -95,6 +97,23 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   on the lane. `applyRoster` re-sends the defs every time, which is what lets a pet
   drawn in the editor join without a restart — and would double every pet up if
   registering also adopted.
+
+- **The five bundled pets are guests, and arrive switched off.** The four animals
+  are the story; `pets/bundled.json` is not. `defaultOff` in `pet-roster.js` does
+  it, and the subtle part is that it only applies while the config has never
+  *placed* the pet — being in `order` is the test. The Pets window saves the whole
+  list on every change, so after one save every pet is named there; keying the
+  default on anything else forces a guest the user switched on back off at the next
+  launch, which reads as the checkbox not working. Guests are badged `GUEST`
+  rather than `CUSTOM`, because a pet the user never touched is not theirs.
+- **The pet loader keys on name, user file second.** `readPetDefs()` merges
+  `pets/bundled.json` then `~/.strays/custom-pets.json`, so editing a bundled pet
+  in your own file *replaces* it. Concatenating would put two animals with one name
+  on the lane, and a custom pet's name is its roster id — the roster could not tell
+  them apart.
+- **Regenerate rather than hand-edit.** `node pets/build.js` writes
+  `bundled.json` and throws on a ragged row or an unknown palette character. Only
+  `pets/bundled.json` is in the npm `files` whitelist; the generator is not.
 
 ## The Pets window is Nothing-styled
 

@@ -200,3 +200,73 @@ test('no pets available at all is an empty roster, not an exception', () => {
   assert.deepStrictEqual(enabled, []);
   assert.deepStrictEqual(resolveRoster({}, undefined), { order: [], enabled: [] });
 });
+
+// ------------------------------------------------------------------ guests
+/*
+ * The pets that ship with strays but are not the team.
+ *
+ * The four animals are the story — each one a bug you have personally met — so a
+ * bundled guest arrives switched off and the Pets window is where you let one in.
+ * The whole difficulty is that "switched off by default" has to stop applying the
+ * moment the user says otherwise, and the window saves the *entire* list on every
+ * change, so after one save every pet is named in `order`.
+ */
+const guests = (names, customs = names) => ({
+  builtIns: BUILT_INS, customs, defaultOff: names,
+});
+
+test('a bundled guest ships switched off, but is still on the list', () => {
+  const { order, enabled } = resolveRoster({}, guests(['Yoda', 'BMO']));
+  assert.ok(order.includes('Yoda') && order.includes('BMO'), 'both are shown');
+  assert.ok(!enabled.includes('Yoda'), 'and neither is out');
+  assert.ok(!enabled.includes('BMO'));
+  assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex', 'heisenbug'],
+    'the team is exactly the four animals');
+});
+
+test('letting a guest in survives a restart', () => {
+  // what the window saves after checking Yoda: the whole order, Yoda not in off
+  const saved = {
+    order: ['segfault', 'grep', 'mutex', 'Yoda', 'BMO', 'heisenbug'],
+    off: ['BMO'],
+  };
+  const { enabled } = resolveRoster(saved, guests(['Yoda', 'BMO']));
+  assert.ok(enabled.includes('Yoda'),
+    'a guest the user switched on must not be forced back off on the next launch');
+  assert.ok(!enabled.includes('BMO'), 'and the one still unchecked stays out');
+});
+
+test('a guest switched off by hand is off for the stated reason, not the default', () => {
+  const saved = { order: ['segfault', 'Yoda'], off: ['Yoda'] };
+  const { enabled } = resolveRoster(saved, guests(['Yoda']));
+  assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex', 'heisenbug']);
+});
+
+test('guests take their default place in the order — before the fish', () => {
+  const { order } = resolveRoster({}, guests(['Yoda', 'Rick']));
+  assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'Yoda', 'Rick', 'heisenbug']);
+});
+
+test('defaultOff naming a pet that is not here changes nothing', () => {
+  const { order, enabled } = resolveRoster({}, {
+    builtIns: BUILT_INS, customs: [], defaultOff: ['Ghost'],
+  });
+  assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'heisenbug']);
+  assert.deepStrictEqual(enabled, order, 'and does not switch off a built-in');
+});
+
+test('a built-in could be defaulted off too, and the team shrinks by exactly one', () => {
+  // not shipped that way, but the rule must not be special-cased to custom pets
+  const { enabled } = resolveRoster({}, {
+    builtIns: BUILT_INS, customs: [], defaultOff: ['heisenbug'],
+  });
+  assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex']);
+});
+
+test('a missing or ragged defaultOff is read as no guests', () => {
+  for (const bad of [undefined, null, 'Yoda', 7]) {
+    const { enabled } = resolveRoster({}, { builtIns: BUILT_INS, customs: ['Yoda'], defaultOff: bad });
+    assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex', 'Yoda', 'heisenbug'],
+      `defaultOff=${JSON.stringify(bad)}`);
+  }
+});

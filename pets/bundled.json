@@ -1,0 +1,391 @@
+[
+  {
+    "name": "Yoda",
+    "speed": 14,
+    "phrases": [
+      "Do or do not. There is no try.",
+      "Compile, it does not.",
+      "Much to learn, you still have.",
+      "Patience. Thinking, the model is.",
+      "Ready, the tests are not.",
+      "Size matters not. Look at the diff.",
+      "Fear leads to anger. Anger leads to force-push.",
+      "Named this variable well, you have not."
+    ],
+    "palette": {
+      "1": "#a9c98d",
+      "2": "#84a86a",
+      "3": "#5e7f4a",
+      "r": "#a89275",
+      "b": "#7b6950",
+      "h": "#b9c0b4",
+      "t": "#6b4f38",
+      "k": "#17181c",
+      "w": "#f5f7fb"
+    },
+    "grids": {
+      "walk1": [
+        "....hh1111hh....",
+        "....h111111h....",
+        "..221331133122..",
+        "22221wk11wk12222",
+        "..221112211122..",
+        "....112kk211....",
+        ".....222222.....",
+        "t...rrrrrrrr....",
+        "t..rrrrbbrrrr...",
+        "t.1rrrrbbrrrr1..",
+        "t..bbbbbbbbbb...",
+        "t.bbbbbbbbbbbb..",
+        "t..22......22..."
+      ],
+      "walk2": [
+        "....hh1111hh....",
+        "....h111111h....",
+        "..221331133122..",
+        "22221wk11wk12222",
+        "..221112211122..",
+        "....112kk211....",
+        ".....222222.....",
+        "t...rrrrrrrr....",
+        "t..rrrrbbrrrr...",
+        "t.1rrrrbbrrrr1..",
+        "t..bbbbbbbbbb...",
+        "t.bbbbbbbbbbbb..",
+        "t....22..22....."
+      ],
+      "sit": [
+        "....hh1111hh....",
+        "....h111111h....",
+        "..221331133122..",
+        "22221kk11kk12222",
+        "..221112211122..",
+        "....112kk211....",
+        ".....222222.....",
+        "...rrrrrrrrrr...",
+        ".1rrrrrrrrrrrr1.",
+        ".bbbbbbbbbbbbbb.",
+        ".2bbbbbbbbbbbb2."
+      ],
+      "sleep": [
+        "....hh1111hh....",
+        "....h111111h....",
+        "..221331133122..",
+        "22221kk11kk12222",
+        "..221112211122..",
+        "....112kk211....",
+        ".....222222.....",
+        "...rrrrrrrrrr...",
+        "..bbbbbbbbbbbb..",
+        "bbbbbbbbbbbbbbbb"
+      ]
+    }
+  },
+  {
+    "name": "Rick",
+    "speed": 34,
+    "phrases": [
+      "Wubba lubba dub dub.",
+      "It compiled. Ship it.",
+      "Don't think about it.",
+      "I turned myself into a daemon, Morty.",
+      "Sometimes science is more art than science.",
+      "That just sounds like tech debt with extra steps.",
+      "Nobody reads the logs, Morty. Nobody."
+    ],
+    "palette": {
+      "1": "#e8c9a8",
+      "2": "#cfa781",
+      "h": "#9fb0c8",
+      "c": "#eef1f6",
+      "d": "#c2c8d2",
+      "t": "#5a6473",
+      "e": "#3f4756",
+      "k": "#17181c",
+      "w": "#f5f7fb"
+    },
+    "grids": {
+      "walk1": [
+        "..hh..hh..hh....",
+        "..hhhhhhhhhhh...",
+        "....h111111h....",
+        "....11kkkk11....",
+        "....1wk11wk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "...cccccccccc...",
+        "..1ccccddcccc1..",
+        "..cccccccccccc..",
+        "....tt....tt....",
+        "...eee....eee..."
+      ],
+      "walk2": [
+        "..hh..hh..hh....",
+        "..hhhhhhhhhhh...",
+        "....h111111h....",
+        "....11kkkk11....",
+        "....1wk11wk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "...cccccccccc...",
+        "..1ccccddcccc1..",
+        "..cccccccccccc..",
+        ".....tt..tt.....",
+        "....eee..eee...."
+      ],
+      "sit": [
+        "..hh..hh..hh....",
+        "..hhhhhhhhhhh...",
+        "....h111111h....",
+        "....11kkkk11....",
+        "....1kk11kk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "...cccccccccc...",
+        "..1cccccccccc1..",
+        "..cccccccccccc..",
+        "..ttt......ttt.."
+      ],
+      "sleep": [
+        "..hh..hh..hh....",
+        "..hhhhhhhhhhh...",
+        "....h111111h....",
+        "....11kkkk11....",
+        "....1kk11kk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "...cccccccccc...",
+        "..cccccccccccc..",
+        ".tttttttttttttt."
+      ]
+    }
+  },
+  {
+    "name": "Morty",
+    "speed": 26,
+    "phrases": [
+      "Aw jeez.",
+      "It worked on my machine?",
+      "I-I don't think we should push this, Rick.",
+      "Is it supposed to do that?",
+      "Aw man, the tests are red again.",
+      "Can we just revert it? Please?"
+    ],
+    "palette": {
+      "1": "#e8c9a8",
+      "2": "#cfa781",
+      "h": "#7a4a28",
+      "y": "#e8d24a",
+      "j": "#4a6b9e",
+      "e": "#4a3826",
+      "k": "#17181c",
+      "w": "#f5f7fb"
+    },
+    "grids": {
+      "walk1": [
+        ".....hhhhhh.....",
+        "....hhhhhhhh....",
+        "....h111111h....",
+        "....1wk11wk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "....yyyyyyyy....",
+        "..1yyyyyyyyyy1..",
+        "...yyyyyyyyyy...",
+        "....jjj..jjj....",
+        "....ee....ee...."
+      ],
+      "walk2": [
+        ".....hhhhhh.....",
+        "....hhhhhhhh....",
+        "....h111111h....",
+        "....1wk11wk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "....yyyyyyyy....",
+        "..1yyyyyyyyyy1..",
+        "...yyyyyyyyyy...",
+        ".....jjjjjj.....",
+        ".....ee..ee....."
+      ],
+      "sit": [
+        ".....hhhhhh.....",
+        "....hhhhhhhh....",
+        "....h111111h....",
+        "....1kk11kk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "....yyyyyyyy....",
+        "..1yyyyyyyyyy1..",
+        "..jjjjjjjjjjjj..",
+        "..jjj......jjj.."
+      ],
+      "sleep": [
+        ".....hhhhhh.....",
+        "....hhhhhhhh....",
+        "....h111111h....",
+        "....1kk11kk1....",
+        "....11122111....",
+        "....112kk211....",
+        "......2222......",
+        "....yyyyyyyy....",
+        "..yyyyyyyyyyyy..",
+        ".jjjjjjjjjjjjjj."
+      ]
+    }
+  },
+  {
+    "name": "BMO",
+    "speed": 20,
+    "phrases": [
+      "beep. still here.",
+      "Who wants to play a game?",
+      "I am a real boy.",
+      "Do you want to hear a joke about a race condition?",
+      "I made you a save file.",
+      "Oh no. Oh no. Oh... no, it is fine."
+    ],
+    "palette": {
+      "m": "#8fd9c8",
+      "n": "#5fae9c",
+      "s": "#e4f2ec",
+      "b": "#5aa9e6",
+      "p": "#e8788f",
+      "k": "#17181c",
+      "w": "#f5f7fb"
+    },
+    "grids": {
+      "walk1": [
+        "...mmmmmmmmmm...",
+        "..mmssssssssmm..",
+        "..mmssksskssmm..",
+        "..mmssskksssmm..",
+        "mmmmmmmmmmmmmmmm",
+        "..mmmmbmmpmmmm..",
+        "..mmmmmmmmmmmm..",
+        "..nnnnnnnnnnnn..",
+        "....mm....mm....",
+        "...nnn....nnn..."
+      ],
+      "walk2": [
+        "...mmmmmmmmmm...",
+        "..mmssssssssmm..",
+        "..mmssksskssmm..",
+        "..mmssskksssmm..",
+        "mmmmmmmmmmmmmmmm",
+        "..mmmmbmmpmmmm..",
+        "..mmmmmmmmmmmm..",
+        "..nnnnnnnnnnnn..",
+        ".....mm..mm.....",
+        "....nnn..nnn...."
+      ],
+      "sit": [
+        "...mmmmmmmmmm...",
+        "..mmssssssssmm..",
+        "..mmskksskksmm..",
+        "..mmssskksssmm..",
+        "mmmmmmmmmmmmmmmm",
+        "..mmmmbmmpmmmm..",
+        "..mmmmmmmmmmmm..",
+        "..nnnnnnnnnnnn..",
+        "...nnnnnnnnnn..."
+      ],
+      "sleep": [
+        "...mmmmmmmmmm...",
+        "..mmssssssssmm..",
+        "..mmskksskksmm..",
+        "..mmssssssssmm..",
+        "mmmmmmmmmmmmmmmm",
+        "..mmmmbmmpmmmm..",
+        "..mmmmmmmmmmmm..",
+        "..nnnnnnnnnnnn..",
+        "..nnnnnnnnnnnn.."
+      ]
+    }
+  },
+  {
+    "name": "SpongeBob",
+    "speed": 30,
+    "phrases": [
+      "I'm ready! I'm ready!",
+      "Is mayonnaise a config option?",
+      "F is for friends who test together.",
+      "The inner machinations of my mind are an enigma.",
+      "I wumbo, you wumbo, we all wumbo.",
+      "Two hours later…"
+    ],
+    "palette": {
+      "y": "#f2d94e",
+      "o": "#d1b62f",
+      "s": "#eeeee4",
+      "t": "#8a6a3a",
+      "r": "#cf3b3b",
+      "e": "#4a3826",
+      "k": "#17181c",
+      "w": "#f8f8f2",
+      "b": "#5aa9e6"
+    },
+    "grids": {
+      "walk1": [
+        "...yyooyyyoyy...",
+        "..yyoyyyyyyooy..",
+        "..yywwwyywwwyy..",
+        "..yywkwyywkwyy..",
+        "..yyywyooywyyy..",
+        "..yyyykwwkyyyy..",
+        "...yyyoyyoyyy...",
+        "...ssssrrssss...",
+        "..yssssrrssssy..",
+        "...tttttttttt...",
+        "....yy....yy....",
+        "...eee....eee..."
+      ],
+      "walk2": [
+        "...yyooyyyoyy...",
+        "..yyoyyyyyyooy..",
+        "..yywwwyywwwyy..",
+        "..yywkwyywkwyy..",
+        "..yyywyooywyyy..",
+        "..yyyykwwkyyyy..",
+        "...yyyoyyoyyy...",
+        "...ssssrrssss...",
+        "..yssssrrssssy..",
+        "...tttttttttt...",
+        ".....yy..yy.....",
+        "....eee..eee...."
+      ],
+      "sit": [
+        "...yyooyyyoyy...",
+        "..yyoyyyyyyooy..",
+        "..yywwwyywwwyy..",
+        "..yywkwyywkwyy..",
+        "..yyywyooywyyy..",
+        "..yyyykkkkyyyy..",
+        "...yyyoyyoyyy...",
+        "...ssssrrssss...",
+        "..yssssssssssy..",
+        "..tttttttttttt..",
+        "..yyy......yyy.."
+      ],
+      "sleep": [
+        "...yyooyyyoyy...",
+        "..yyoyyyyyyooy..",
+        "..yywwwyywwwyy..",
+        "..yykkkyykkkyy..",
+        "..yyywyooywyyy..",
+        "..yyyyyooyyyyy..",
+        "...yyyoyyoyyy...",
+        "...ssssrrssss...",
+        "..tttttttttttt..",
+        ".tttttttttttttt."
+      ]
+    }
+  }
+]

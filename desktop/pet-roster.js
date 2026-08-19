@@ -36,7 +36,10 @@ function defaultOrder(builtInIds, customNames) {
 /*
  * config: { order?: string[], off?: string[] } — what the user dragged and
  *   unchecked, straight out of ~/.strays/config.json under `pets`.
- * available: { builtIns: string[], customs: string[] } — what exists on disk now.
+ * available: { builtIns, customs, defaultOff } — what exists on disk now, plus the
+ *   ids that arrive switched off. `defaultOff` is for the pets that ship with
+ *   strays: the four animals are the team, and a bundled guest that let itself out
+ *   on install would be a surprise rather than a present.
  *
  * Returns { order, enabled }: `order` is every available pet in the order to
  * show and to bind, `enabled` is the subset that is switched on. The window
@@ -97,6 +100,22 @@ function resolveRoster(config, available) {
   // this needs no guard. Keeping such an entry *on the way back out* is the part
   // that takes work — see mergeRoster.
   const off = new Set(Array.isArray(cfg.off) ? cfg.off : []);
+
+  /*
+   * A pet that ships switched off, but only while the config has never placed it.
+   * Being *in* `order` is the test: the Pets window saves the whole list, so once
+   * anything has been saved every available pet is named there — and a guest the
+   * user switched on would otherwise be forced back off on the next launch, which
+   * reads as the checkbox not working rather than as a default.
+   *
+   * There is no need to also consult `off`: an id listed there is already off, so
+   * defaulting it off again cannot change the answer.
+   */
+  const placed = new Set(saved);
+  for (const id of Array.isArray(available && available.defaultOff) ? available.defaultOff : []) {
+    if (!placed.has(id)) off.add(id);
+  }
+
   return { order, enabled: order.filter((id) => !off.has(id)) };
 }
 
