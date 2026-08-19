@@ -80,22 +80,49 @@ of the package for every typo fixed in the README, so a commit that changes
 nothing anyone installs releases nothing. To release anyway — or to force a
 particular part — run **release** from the Actions tab and pick the bump.
 
-Publishing by hand still works and still goes through the same file:
+**`release.yml` is the only way anything reaches npm**, and that is npm's rule
+rather than a preference. Trusted publishing matches the OIDC `workflow_ref`
+claim, which names the workflow that *started the run* — not the file the running
+job lives in, which is `job_workflow_ref`. So the trusted publisher registered
+for `claude-strays` names `release.yml`, and `publish.yml` is `workflow_call`
+only.
+
+**This was wrong for four releases and nobody noticed.** `publish.yml` used to
+carry `push: tags` and its own `workflow_dispatch`, and the publisher was
+registered against `publish.yml` — so every *manual* publish authenticated and
+every *automatic* one failed. It hid because the release job still tagged
+correctly, and the tag is the part anyone looks at; the only symptom was npm
+staying a version behind the tags. The error does not help either: a
+trusted-publishing identity mismatch comes back as `404 Not Found - PUT
+https://registry.npmjs.org/claude-strays`, which mentions neither OIDC nor
+workflows and reads exactly like a missing package or a typo'd name. npm answers
+404 rather than 403 so that it does not leak whether a package exists.
+
+`publish.yml` now fails on its *first* step if the entry workflow is not
+`release.yml`, printing both claims and the command to use instead, so the next
+time this is wrong it says so before it spends a job on tests.
+
+**Publishing a tag that already exists** — a registry outage, an expired
+credential, a fault in the workflow, or a hand-cut `npm version`:
 
 ```bash
 npm pack                  # inspect exactly what would ship, first
 npm version patch         # commits and tags
-git push --follow-tags    # the tag triggers publish.yml on its own
+git push --follow-tags
+gh workflow run release.yml -f publish_tag=v1.5.1
 ```
 
-**`release.yml` calls `publish.yml` instead of leaving it to the tag it just
-pushed.** A tag pushed by a workflow using `GITHUB_TOKEN` deliberately does not
-trigger another workflow — GitHub's guard against a run that starts itself for
-ever. Left to the tag, every automatic release would tag itself, publish
-nothing, and report success. Because it is *called*, the tag has to be passed in
-as an input: a called workflow otherwise checks out the commit that triggered
-the *caller*, which is the one before the version bump, and would test the new
-version while publishing the old one.
+That last line is needed because a tag can only trigger its own push once, and
+because the bump job deliberately skips a head commit that is itself a release.
+`publish_tag` skips the bump and publishes the tag as given; the `.dmg` is not
+rebuilt, since that tag's asset was built when it was cut.
+
+**The tag is passed in as an input** rather than inferred: a called workflow
+otherwise checks out the commit that triggered the *caller*, which is the one
+before the version bump, and would test the new version while publishing the old
+one. And it is *called* rather than left to the tag because a tag pushed by a
+workflow using `GITHUB_TOKEN` deliberately does not trigger another workflow —
+GitHub's guard against a run that starts itself for ever.
 
 Nothing installs anything on CI. The engine and the whole desktop app are
 dependency-free, so `node --test` runs the suite against a bare checkout, and
@@ -107,9 +134,11 @@ start the app — is never fetched to run tests that open no window.
 `publish.yml` uses an `NPM_TOKEN` secret if the repository has one, and
 otherwise expects **trusted publishing**: npm verifies the run cryptographically
 against a publisher you register at npmjs.com naming this repo and
-`.github/workflows/publish.yml`, so no long-lived secret exists to leak. That is
-the better of the two, and it is why the workflow pins Node 24 — trusted
-publishing needs npm 11.5.1 or newer, and Node 20 ships npm 10.
+**`.github/workflows/release.yml`** — the entry workflow, for the reason above —
+so no long-lived secret exists to leak. That is the better of the two, and it is
+why the workflow pins Node 24: trusted publishing needs npm 11.5.1 or newer, and
+Node 20 ships npm 10. There is currently no `NPM_TOKEN` in the repository, so
+trusted publishing is not a fallback here, it is the mechanism.
 
 Neither can do the *first* publish: a package has to exist before it can have a
 trusted publisher, and the account's 2FA covers the first write. So publish

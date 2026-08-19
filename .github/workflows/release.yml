@@ -13,6 +13,12 @@
 #
 # Run it by hand from the Actions tab to force a particular bump, or to cut the
 # first release of a version the rules would have skipped.
+#
+# **This is the only way anything reaches npm**, and that is npm's rule rather
+# than a preference: trusted publishing matches the OIDC `workflow_ref` claim,
+# which names the workflow that started the run, so the publisher registered for
+# claude-strays names *this* file. publish.yml is `workflow_call` only — see the
+# note at the top of it, and `publish_tag` below for a tag that already exists.
 name: release
 
 on:
@@ -25,6 +31,17 @@ on:
         type: choice
         options: [auto, patch, minor, major]
         default: auto
+      # A tag can only trigger its own push once, and publish.yml can no longer
+      # be dispatched on its own, so this is the way back from a publish that
+      # failed for a reason outside the package — a registry outage, an expired
+      # credential, a fault in the workflow. It is also what finishes a hand-cut
+      # `npm version patch && git push --follow-tags`, because the release job
+      # below deliberately skips a head commit that is itself a release.
+      publish_tag:
+        description: publish an existing tag instead of bumping, e.g. v1.5.0
+        required: false
+        type: string
+        default: ''
 
 # a second push while a release is mid-flight would race it to the tag
 concurrency:
@@ -38,6 +55,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # publishing an existing tag skips the bump entirely: there is nothing to
+    # work out and nothing to commit
+    if: inputs.publish_tag == ''
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
@@ -112,17 +132,35 @@ jobs:
 
   # Called, not left to the tag above: a tag pushed with GITHUB_TOKEN does not
   # trigger another workflow, so a release would tag itself and never publish.
+  #
+  # Calling it also keeps the OIDC identity right. The claim npm matches is the
+  # *entry* workflow, so a job that lives in publish.yml but was started from here
+  # publishes as release.yml, which is what the trusted publisher is registered
+  # for. Turning this into a tag-triggered run of publish.yml is what broke it
+  # before.
+  #
+  # `always()` because the bump job is skipped outright when publishing an
+  # existing tag; the conditions below are what keep a *failed* bump from
+  # publishing anyway.
   publish:
     needs: release
-    if: needs.release.outputs.tag != ''
+    if: >-
+      always() && (
+        inputs.publish_tag != '' ||
+        (needs.release.result == 'success' && needs.release.outputs.tag != '')
+      )
     uses: ./.github/workflows/publish.yml
     with:
-      ref: ${{ needs.release.outputs.tag }}
+      ref: ${{ inputs.publish_tag != '' && inputs.publish_tag || needs.release.outputs.tag }}
     secrets: inherit
 
   # The .dmg for people who have no Node, built alongside the package for people
   # who have. Deliberately not `needs: publish` — the two are independent, and a
   # registry problem should not also cost the download.
+  #
+  # No `always()` here on purpose: publishing an existing tag skips the bump, so
+  # this is skipped too, which is right — that tag's .dmg was built when it was
+  # cut and rebuilding it would replace a released asset.
   app:
     needs: release
     if: needs.release.outputs.tag != ''

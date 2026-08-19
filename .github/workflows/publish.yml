@@ -1,21 +1,28 @@
 # Publish to npm.
 #
-# Two ways in, and both land here:
+# One way in: release.yml calls this. It is deliberately not triggered by the tag
+# it publishes, because a tag pushed with GITHUB_TOKEN does not trigger another
+# workflow — relying on the tag would mean releases that tag themselves and never
+# publish, silently. So the caller passes the tag in and this file checks it
+# agrees with package.json before anything reaches the registry.
 #
-#   - a version tag pushed by hand:  npm version patch && git push --follow-tags
-#   - release.yml, which works the version out from the commits and calls this
-#     workflow directly
+# **This file cannot be an entry point, and that is npm's rule rather than a
+# choice.** Trusted publishing matches the OIDC `workflow_ref` claim, which names
+# the workflow that *started the run* — not the file the running job lives in
+# (`job_workflow_ref`). The trusted publisher for claude-strays is registered
+# against release.yml, so a run that starts here has the wrong identity and npm
+# answers `404 Not Found - PUT` — an error that says nothing whatsoever about
+# OIDC and reads exactly like a missing package or a typo'd name.
 #
-# It is called rather than left to the tag it pushes, because a tag pushed by a
-# workflow using GITHUB_TOKEN deliberately does not trigger another workflow.
-# Relying on the tag would mean releases that tag themselves and never publish,
-# silently — so the caller passes the tag in and this file checks it agrees with
-# package.json before anything reaches the registry.
+# That is not hypothetical: this workflow used to carry `push: tags` and its own
+# `workflow_dispatch`, the publisher was registered against publish.yml, and so
+# every *manual* publish worked while the automatic one 404'd on every release.
+# It went unnoticed because the release job still tagged, and the tag is the part
+# people look at. To publish a tag that already exists, see `publish_tag` in
+# release.yml.
 name: publish
 
 on:
-  push:
-    tags: ['v*']
   workflow_call:
     inputs:
       ref:
@@ -23,17 +30,6 @@ on:
         required: false
         type: string
         default: ''
-  # A tag can only trigger its own push once, so a publish that fails for a
-  # reason outside the package — a registry outage, an expired credential, a
-  # fault in this file — otherwise leaves a tagged version that can never be
-  # published without moving the tag. This is how to run it again for a tag that
-  # already exists.
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: the tag to publish, e.g. v1.3.0
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -45,6 +41,29 @@ jobs:
       contents: read
       id-token: write # provenance, and trusted publishing if it is set up
     steps:
+      # Fail here, with the reason, rather than at `npm publish` with a 404 that
+      # names neither OIDC nor the workflow. Costs one step and no network.
+      - name: The entry workflow has to be the one npm trusts
+        env:
+          ENTRY: ${{ github.workflow_ref }}
+          JOB: ${{ github.job_workflow_ref }}
+        run: |
+          echo "entry workflow (what npm matches): $ENTRY"
+          echo "this job's workflow:               $JOB"
+          case "$ENTRY" in
+            */release.yml@*) echo "ok — the trusted publisher is registered for release.yml" ;;
+            *)
+              echo
+              echo "This run did not start from release.yml, so npm's trusted"
+              echo "publisher will not match it and the publish would fail with a"
+              echo "bare '404 Not Found - PUT'. npm matches workflow_ref, which is"
+              echo "the workflow that started the run, not the file this job is in."
+              echo
+              echo "To publish a tag that already exists:"
+              echo "  gh workflow run release.yml -f publish_tag=vX.Y.Z"
+              exit 1 ;;
+          esac
+
       - uses: actions/checkout@v7
         with:
           # a called workflow otherwise checks out the commit that triggered the
