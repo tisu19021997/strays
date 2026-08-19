@@ -475,9 +475,9 @@ function currentRoster() {
   const resolved = resolveRoster(readConfig().pets, {
     builtIns: builtIns.map((p) => p.id),
     customs: defs.map((d) => d.name),
-    // a guest is off until asked in, but only while the config has never had an
-    // opinion about it — otherwise switching one on would not survive a restart
-    defaultOff: bundled,
+    // guests ship with strays: off until asked in, and last in the list so the
+    // four animals stay together at the top of the window
+    guests: bundled,
   });
   // art for every row, so the window can draw the pet rather than name it
   const guests = new Set(bundled);

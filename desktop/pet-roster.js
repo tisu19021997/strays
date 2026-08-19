@@ -23,9 +23,12 @@
 const LAST_BY_DEFAULT = 'heisenbug';
 
 /*
- * Every pet that exists right now, in the order sessions would reach them if
- * nobody had ever stated a preference. Customs sit between the land pets and the
- * fish, which is where the old `filter(kind !== 'heisenbug')` put them.
+ * The team, in the order sessions would reach them if nobody had ever stated a
+ * preference. Customs sit between the land pets and the fish, which is where the
+ * old `filter(kind !== 'heisenbug')` put them — moving them would silently
+ * reorder every existing user's team.
+ *
+ * Guests are not in here. See resolveRoster.
  */
 function defaultOrder(builtInIds, customNames) {
   const last = builtInIds.filter((id) => id === LAST_BY_DEFAULT);
@@ -33,13 +36,21 @@ function defaultOrder(builtInIds, customNames) {
   return [...first, ...customNames, ...last];
 }
 
+const list = (v) => (Array.isArray(v) ? v : []);
+
 /*
  * config: { order?: string[], off?: string[] } — what the user dragged and
  *   unchecked, straight out of ~/.strays/config.json under `pets`.
- * available: { builtIns, customs, defaultOff } — what exists on disk now, plus the
- *   ids that arrive switched off. `defaultOff` is for the pets that ship with
- *   strays: the four animals are the team, and a bundled guest that let itself out
- *   on install would be a surprise rather than a present.
+ * available: { builtIns, customs, guests } — what exists on disk now.
+ *
+ * A **guest** is a pet that ships with strays: Yoda and the rest of
+ * pets/bundled.json. Being a guest means two things, and they are one idea rather
+ * than two settings — it arrives *switched off*, and it sits *after* everything
+ * else. The four animals are the story, so a bundled pet that let itself out on
+ * install would be a surprise rather than a present, and one that landed in the
+ * middle of the list would split the team across the fold: with five of them
+ * between Mutex and Heisenbug, the fish was pushed off the bottom of the window
+ * and the four no longer read as a set.
  *
  * Returns { order, enabled }: `order` is every available pet in the order to
  * show and to bind, `enabled` is the subset that is switched on. The window
@@ -48,11 +59,23 @@ function defaultOrder(builtInIds, customNames) {
  */
 function resolveRoster(config, available) {
   const cfg = config || {};
-  const builtIns = (available && available.builtIns) || [];
-  const customs = (available && available.customs) || [];
+  const builtIns = list(available && available.builtIns);
+  const allCustoms = list(available && available.customs);
+
+  /*
+   * A guest reaches this through the same list as a custom pet — the loader merges
+   * bundled.json into the same set of defs — so `guests` says which of them are
+   * visitors rather than adding anything. Naming one that did not load is inert:
+   * it must not appear in the roster, or the window draws a row for a pet the lane
+   * will silently skip because it has no art.
+   */
+  const loaded = new Set(allCustoms);
+  const guests = list(available && available.guests).filter((id) => loaded.has(id));
+  const guestSet = new Set(guests);
+  const customs = allCustoms.filter((id) => !guestSet.has(id));
 
   const def = defaultOrder(builtIns, customs);
-  const exists = new Set(def);
+  const exists = new Set([...def, ...guests]);
 
   // A saved order can name pets that are gone: a custom pet deleted out of
   // custom-pets.json, or a built-in a future release drops. Dropping those
@@ -96,25 +119,37 @@ function resolveRoster(config, available) {
     rank.set(id, insertAt);
   }
 
+  /*
+   * Guests go on the end, and they are *appended* rather than anchored like a
+   * custom pet. Anchoring would drop them wherever Heisenbug happens to sit in the
+   * user's own order, which for anyone who has dragged the list is the middle of
+   * their team. The bottom is the only position that means "visitor" no matter what
+   * the user has done above it.
+   */
+  const placed = new Set(order);
+  for (const id of guests) {
+    if (placed.has(id)) continue;
+    placed.add(id);
+    order.push(id);
+  }
+
   // An `off` entry naming a pet that is not here is simply inert, which is why
   // this needs no guard. Keeping such an entry *on the way back out* is the part
   // that takes work — see mergeRoster.
   const off = new Set(Array.isArray(cfg.off) ? cfg.off : []);
 
   /*
-   * A pet that ships switched off, but only while the config has never placed it.
-   * Being *in* `order` is the test: the Pets window saves the whole list, so once
-   * anything has been saved every available pet is named there — and a guest the
-   * user switched on would otherwise be forced back off on the next launch, which
-   * reads as the checkbox not working rather than as a default.
+   * A guest is switched off, but only while the config has never placed it. Being
+   * in the *saved* order is the test: the Pets window writes the whole list on
+   * every change, so once anything has been saved every available pet is named
+   * there — and a guest the user asked in would otherwise be forced back off at
+   * the next launch, which reads as the checkbox not working rather than a default.
    *
    * There is no need to also consult `off`: an id listed there is already off, so
    * defaulting it off again cannot change the answer.
    */
-  const placed = new Set(saved);
-  for (const id of Array.isArray(available && available.defaultOff) ? available.defaultOff : []) {
-    if (!placed.has(id)) off.add(id);
-  }
+  const stated = new Set(saved);
+  for (const id of guests) if (!stated.has(id)) off.add(id);
 
   return { order, enabled: order.filter((id) => !off.has(id)) };
 }

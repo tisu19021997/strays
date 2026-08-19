@@ -98,14 +98,29 @@ The most common request. A pet is JSON: `{ name, speed, phrases, palette, grids 
   drawn in the editor join without a restart — and would double every pet up if
   registering also adopted.
 
-- **The five bundled pets are guests, and arrive switched off.** The four animals
-  are the story; `pets/bundled.json` is not. `defaultOff` in `pet-roster.js` does
-  it, and the subtle part is that it only applies while the config has never
-  *placed* the pet — being in `order` is the test. The Pets window saves the whole
-  list on every change, so after one save every pet is named there; keying the
-  default on anything else forces a guest the user switched on back off at the next
-  launch, which reads as the checkbox not working. Guests are badged `GUEST`
-  rather than `CUSTOM`, because a pet the user never touched is not theirs.
+- **A guest is one idea with two halves: switched off, and last.** `guests` in
+  `pet-roster.js` — the five in `pets/bundled.json`. Off, because the four animals
+  are the story and a bundled pet letting itself out on install is a surprise
+  rather than a present. Last, because five of them sitting between Mutex and
+  Heisenbug pushed the fish off the bottom of the window and the four stopped
+  reading as a set. Deliberately *not* two settings: they cannot then disagree.
+  - Guests are **appended**, not anchored the way a new custom pet is. Anchoring
+    drops them wherever Heisenbug happens to sit in the user's own order, which
+    for anyone who has dragged the list is the middle of their team.
+  - A **user-drawn** custom still lands among the team, before the fish. That is
+    the old `filter(kind !== 'heisenbug')` position and moving it would silently
+    reorder every existing user.
+  - The default only applies while the config has never *placed* the pet — being
+    in the saved `order` is the test. The window writes the whole list on every
+    change, so keying it on anything else forces a guest the user asked in back
+    off at the next launch, which reads as the checkbox not working.
+  - A guest naming a pet that did not load is **inert**. It reaches the resolver
+    through the same list as a custom pet, so an id with no def would otherwise
+    draw a row for a pet the lane silently skips for having no art.
+  - The order must contain no id twice — a pet can arrive by two routes, and the
+    roster keys by id, so a duplicate shadows the original.
+  - Badged `GUEST` rather than `CUSTOM`: a pet the user never touched is not
+    theirs.
 - **The pet loader keys on name, user file second.** `readPetDefs()` merges
   `pets/bundled.json` then `~/.strays/custom-pets.json`, so editing a bundled pet
   in your own file *replaces* it. Concatenating would put two animals with one name

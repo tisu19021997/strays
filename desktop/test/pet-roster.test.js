@@ -212,7 +212,7 @@ test('no pets available at all is an empty roster, not an exception', () => {
  * change, so after one save every pet is named in `order`.
  */
 const guests = (names, customs = names) => ({
-  builtIns: BUILT_INS, customs, defaultOff: names,
+  builtIns: BUILT_INS, customs, guests: names,
 });
 
 test('a bundled guest ships switched off, but is still on the list', () => {
@@ -242,31 +242,77 @@ test('a guest switched off by hand is off for the stated reason, not the default
   assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex', 'heisenbug']);
 });
 
-test('guests take their default place in the order — before the fish', () => {
+/*
+ * The team has to stay together at the top. Five guests between Mutex and
+ * Heisenbug pushed the fish off the bottom of the window, so the four stopped
+ * reading as a set — which is how this was reported.
+ */
+test('guests go after the whole team, not into the middle of it', () => {
   const { order } = resolveRoster({}, guests(['Yoda', 'Rick']));
-  assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'Yoda', 'Rick', 'heisenbug']);
+  assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'heisenbug', 'Yoda', 'Rick']);
+  assert.ok(order.indexOf('Yoda') > order.indexOf('heisenbug'),
+    'the fish is the last of the team, so a guest comes after her');
 });
 
-test('defaultOff naming a pet that is not here changes nothing', () => {
+test('guests land at the bottom even when the team has been reordered', () => {
+  // anchoring a guest on the fish would drop it into the middle of this list
+  const cfg = { order: ['heisenbug', 'segfault', 'mutex', 'grep'] };
+  const { order } = resolveRoster(cfg, guests(['Yoda']));
+  assert.deepStrictEqual(order, ['heisenbug', 'segfault', 'mutex', 'grep', 'Yoda']);
+});
+
+test('a user-drawn custom still lands among the team, not with the guests', () => {
+  const { order } = resolveRoster({}, {
+    builtIns: BUILT_INS, customs: ['Nullptr', 'Yoda'], guests: ['Yoda'],
+  });
+  assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'Nullptr', 'heisenbug', 'Yoda'],
+    'a pet you drew is one of yours; a bundled one is a visitor');
+});
+
+test('a guest the user dragged upward keeps the place they gave it', () => {
+  const cfg = { order: ['Yoda', 'mutex', 'heisenbug', 'segfault', 'grep'] };
+  const { order, enabled } = resolveRoster(cfg, guests(['Yoda', 'Rick']));
+  assert.strictEqual(order[0], 'Yoda', 'placed by hand, so it stays put');
+  assert.strictEqual(order[order.length - 1], 'Rick', 'the unplaced guest still goes last');
+  assert.ok(enabled.includes('Yoda'), 'and stays switched on');
+  assert.ok(!enabled.includes('Rick'));
+});
+
+test('a guest that is not here changes nothing', () => {
   const { order, enabled } = resolveRoster({}, {
-    builtIns: BUILT_INS, customs: [], defaultOff: ['Ghost'],
+    builtIns: BUILT_INS, customs: [], guests: ['Ghost'],
   });
   assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'heisenbug']);
   assert.deepStrictEqual(enabled, order, 'and does not switch off a built-in');
 });
 
-test('a built-in could be defaulted off too, and the team shrinks by exactly one', () => {
-  // not shipped that way, but the rule must not be special-cased to custom pets
-  const { enabled } = resolveRoster({}, {
-    builtIns: BUILT_INS, customs: [], defaultOff: ['heisenbug'],
-  });
-  assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex']);
+test('a missing or ragged guest list is read as no guests', () => {
+  for (const bad of [undefined, null, 'Yoda', 7]) {
+    const { order, enabled } = resolveRoster({}, { builtIns: BUILT_INS, customs: ['Yoda'], guests: bad });
+    assert.deepStrictEqual(order, ['segfault', 'grep', 'mutex', 'Yoda', 'heisenbug'],
+      `guests=${JSON.stringify(bad)} — Yoda falls back to being an ordinary custom pet`);
+    assert.deepStrictEqual(enabled, order);
+  }
 });
 
-test('a missing or ragged defaultOff is read as no guests', () => {
-  for (const bad of [undefined, null, 'Yoda', 7]) {
-    const { enabled } = resolveRoster({}, { builtIns: BUILT_INS, customs: ['Yoda'], defaultOff: bad });
-    assert.deepStrictEqual(enabled, ['segfault', 'grep', 'mutex', 'Yoda', 'heisenbug'],
-      `defaultOff=${JSON.stringify(bad)}`);
+/*
+ * A pet can reach the order by two routes — the saved order, and being appended
+ * as an unplaced guest — so the one invariant that has to hold across every
+ * config is that it arrives once. A duplicate id is worse than a wrong position:
+ * the roster keys pets by id, so the second one shadows the first.
+ */
+test('the resolved order never contains the same pet twice', () => {
+  const cases = [
+    [{}, guests(['Yoda', 'Rick'])],
+    [{ order: ['Yoda', 'mutex', 'heisenbug', 'segfault', 'grep'] }, guests(['Yoda', 'Rick'])],
+    [{ order: ['Yoda', 'Rick'], off: ['Rick'] }, guests(['Yoda', 'Rick'])],
+    [{ order: ['grep', 'grep', 'Yoda'] }, guests(['Yoda'])],
+    [{ order: ['Rick', 'Yoda'] }, guests(['Yoda', 'Rick'])],
+  ];
+  for (const [cfg, avail] of cases) {
+    const { order, enabled } = resolveRoster(cfg, avail);
+    assert.strictEqual(new Set(order).size, order.length,
+      `duplicate in order for ${JSON.stringify(cfg)}: ${order.join(',')}`);
+    assert.strictEqual(new Set(enabled).size, enabled.length, 'and none in enabled');
   }
 });

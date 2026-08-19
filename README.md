@@ -33,8 +33,9 @@ Want a fifth? [Draw one.](#make-your-own) — or let one of the guests in.
 
 ### And five guests
 
-They ship with strays and start switched off, because the four above are the
-point. Turn one on in 🐾 → **Pets…**, where they're badged `GUEST`.
+They ship with strays and sit at the bottom of the list, switched off, because the
+four above are the point. Turn one on in 🐾 → **Pets…**, where they're badged
+`GUEST`.
 
 |     | who |
 | --- | --- |
