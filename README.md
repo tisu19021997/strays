@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="build/logo.png" alt="strays — Heisenbug in her space helmet" width="140">
+
 # strays 🐾
 
 **A tiny team of pets that live at the bottom of your screen and keep you company while Claude Code works.**

@@ -1,15 +1,26 @@
 /*
- * The app icon, drawn rather than downloaded.
+ * The app icon, built from the project's own logo.
  *
  * A packaged app's icon is the first thing anyone sees, and a generic Electron
- * one says "this is a web page in a box". This draws a paw on the lane's own
- * dark plate, from a pixel grid and the palette the pets are painted with, so
- * the icon is made of the same material as the thing it opens.
+ * one says "this is a web page in a box". The source is `build/logo.png` —
+ * Heisenbug in her helmet, the mark the project is known by — and this turns it
+ * into the sizes macOS wants.
  *
  * No dependencies: zlib is in Node, and a PNG is a header plus one zlib stream
- * of filtered scanlines. `iconutil` (macOS) turns the sizes into the .icns.
+ * of filtered scanlines, so decoding and re-encoding one is a page of code
+ * rather than a package. `iconutil` (macOS) turns the sizes into the .icns.
  *
  *   node tools/make-icon.js          # writes build/icon.png and build/icon.icns
+ *
+ * This used to draw a paw from a pixel grid, and scaled it by whole pixels so
+ * every size stayed crisp. That rule does not survive the change of source: the
+ * logo is a 1254px raster whose art does not sit on an aligned block grid (the
+ * export resampled it), so there is no integer factor to scale by and
+ * nearest-neighbour would drop whole rows of pixels — at 16px that is not a
+ * crisp icon, it is a broken one. Every size is therefore area-averaged from
+ * the full-resolution source, over PREMULTIPLIED alpha: averaging straight RGBA
+ * pulls the invisible black of fully-transparent pixels into every edge, which
+ * shows up as a dark fringe around the whole mark on a light Dock.
  */
 const fs = require('fs');
 const path = require('path');
@@ -17,86 +28,80 @@ const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 
 const OUT = path.join(__dirname, '..', 'build');
+const LOGO = path.join(OUT, 'logo.png');
 
-/*
- * A paw, 16 across, in the same idiom as the sprites: '.' is transparent and
- * every other character is a key into the palette below. Four toes and a pad —
- * the shape reads at 16px in a menu bar and at 1024 in a Dock.
- */
-const PAW = [
-  '................',
-  '....111..111....',
-  '....111..111....',
-  '111.111..111.111',
-  '111.111..111.111',
-  '111..........111',
-  '.11..........11.',
-  '................',
-  '....22222222....',
-  '..222222222222..',
-  '.22222222222222.',
-  '.22222222222222.',
-  '.22222222222222.',
-  '..222222222222..',
-  '....22222222....',
-  '................',
-];
+/* ---------------------------------------------------------------- decode */
+/* PNG -> { w, h, px } RGBA8. Handles the five scanline filters; the logo is
+ * 8-bit truecolour+alpha and non-interlaced, which is what an export gives you.
+ * Anything else is a loud failure rather than a silently wrong icon. */
+function decode(file) {
+  const d = fs.readFileSync(file);
+  if (d.readUInt32BE(0) !== 0x89504e47) throw new Error(`${file}: not a PNG`);
+  const w = d.readUInt32BE(16), h = d.readUInt32BE(20);
+  const depth = d[24], colour = d[25], interlace = d[28];
+  if (depth !== 8 || colour !== 6 || interlace !== 0)
+    throw new Error(`${file}: need 8-bit RGBA, non-interlaced (got depth ${depth}, colour ${colour}, interlace ${interlace})`);
 
-const PAL = {
-  1: '#ffd166', // Mutex's warm yellow — the toes
-  2: '#ffb26b', // Heisenbug's orange — the pad
-};
-const PLATE = '#17181c';  // the same near-black every surface in the lane uses
-const EDGE = '#2a2c34';
-
-const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-
-/* an RGBA buffer, and the two ways anything gets drawn into it */
-function canvas(size) {
-  return { size, px: Buffer.alloc(size * size * 4) };
-}
-function put(c, x, y, [r, g, b], a = 255) {
-  if (x < 0 || y < 0 || x >= c.size || y >= c.size) return;
-  const i = (y * c.size + x) * 4;
-  c.px[i] = r; c.px[i + 1] = g; c.px[i + 2] = b; c.px[i + 3] = a;
-}
-/* a rounded square, the shape macOS expects an icon to sit in */
-function plate(c, inset, radius, colour) {
-  const s = c.size, lo = inset, hi = s - inset - 1, rgb = hex(colour);
-  for (let y = lo; y <= hi; y++) {
-    for (let x = lo; x <= hi; x++) {
-      const dx = Math.max(lo + radius - x, x - (hi - radius), 0);
-      const dy = Math.max(lo + radius - y, y - (hi - radius), 0);
-      if (dx * dx + dy * dy <= radius * radius) put(c, x, y, rgb);
-    }
+  let i = 8, idat = [];
+  while (i < d.length) {
+    const len = d.readUInt32BE(i), type = d.toString('ascii', i + 4, i + 8);
+    if (type === 'IDAT') idat.push(d.subarray(i + 8, i + 8 + len));
+    i += 12 + len;
   }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+
+  const bpp = 4, stride = w * bpp, px = Buffer.alloc(w * h * bpp);
+  let pos = 0, prev = Buffer.alloc(stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[pos++];
+    const line = Buffer.from(raw.subarray(pos, pos + stride)); pos += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? line[x - bpp] : 0;
+      const b = prev[x];
+      const c = x >= bpp ? prev[x - bpp] : 0;
+      if (f === 1) line[x] = (line[x] + a) & 255;
+      else if (f === 2) line[x] = (line[x] + b) & 255;
+      else if (f === 3) line[x] = (line[x] + ((a + b) >> 1)) & 255;
+      else if (f === 4) {
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        line[x] = (line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
+      } else if (f !== 0) throw new Error(`${file}: bad filter ${f} on row ${y}`);
+    }
+    line.copy(px, y * stride);
+    prev = line;
+  }
+  return { w, h, px };
 }
 
-/* the paw, scaled up by whole pixels so it stays pixel art at every size */
-function paw(c, scale, offX, offY) {
-  for (let row = 0; row < PAW.length; row++) {
-    for (let col = 0; col < PAW[row].length; col++) {
-      const key = PAW[row][col];
-      if (key === '.' || key === ' ') continue;
-      const rgb = hex(PAL[key]);
-      for (let dy = 0; dy < scale; dy++) {
-        for (let dx = 0; dx < scale; dx++) put(c, offX + col * scale + dx, offY + row * scale + dy, rgb);
+/* ---------------------------------------------------------------- resize */
+/* Area average over premultiplied alpha — see the note at the top for why the
+ * premultiply is load-bearing rather than pedantry. */
+function resize(src, size) {
+  const { w, h, px } = src;
+  const out = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const y0 = Math.floor((y * h) / size);
+    const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * h) / size));
+    for (let x = 0; x < size; x++) {
+      const x0 = Math.floor((x * w) / size);
+      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * w) / size));
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const i = (sy * w + sx) * 4, al = px[i + 3] / 255;
+          r += px[i] * al; g += px[i + 1] * al; b += px[i + 2] * al; a += al; n++;
+        }
+      }
+      const o = (y * size + x) * 4, mean = a / n;
+      if (mean > 0) {
+        out[o] = Math.min(255, Math.round(r / n / mean));
+        out[o + 1] = Math.min(255, Math.round(g / n / mean));
+        out[o + 2] = Math.min(255, Math.round(b / n / mean));
+        out[o + 3] = Math.round(mean * 255);
       }
     }
   }
-}
-
-function render(size) {
-  const c = canvas(size);
-  // margins that match the other icons in a Dock rather than filling the square
-  const inset = Math.round(size * 0.06);
-  plate(c, inset, Math.round(size * 0.22), EDGE);
-  plate(c, inset + Math.max(1, Math.round(size * 0.012)), Math.round(size * 0.21), PLATE);
-
-  const scale = Math.max(1, Math.floor((size * 0.66) / PAW.length));
-  const span = scale * PAW.length;
-  paw(c, scale, Math.round((size - span) / 2), Math.round((size - span) / 2));
-  return c;
+  return { size, px: out };
 }
 
 /* RGBA -> PNG. Filter 0 on every scanline; zlib does the rest. */
@@ -141,15 +146,10 @@ function crc32(buf) {
   return c ^ -1;
 }
 
+const logo = decode(LOGO);
 fs.mkdirSync(OUT, { recursive: true });
-fs.writeFileSync(path.join(OUT, 'icon.png'), png(render(1024)));
+fs.writeFileSync(path.join(OUT, 'icon.png'), png(resize(logo, 1024)));
 
-/*
- * .icns, for the app bundle. Every size is rendered rather than resampled from
- * one big one — nearest-neighbour scaling of pixel art by non-integer factors
- * turns crisp edges into porridge, and the small sizes are where an icon is
- * actually looked at.
- */
 const ICONSET = path.join(OUT, 'icon.iconset');
 fs.rmSync(ICONSET, { recursive: true, force: true });
 fs.mkdirSync(ICONSET, { recursive: true });
@@ -159,12 +159,12 @@ for (const [size, name] of [
   [128, 'icon_128x128.png'], [256, 'icon_128x128@2x.png'],
   [256, 'icon_256x256.png'], [512, 'icon_256x256@2x.png'],
   [512, 'icon_512x512.png'], [1024, 'icon_512x512@2x.png'],
-]) fs.writeFileSync(path.join(ICONSET, name), png(render(size)));
+]) fs.writeFileSync(path.join(ICONSET, name), png(resize(logo, size)));
 
 try {
   execFileSync('iconutil', ['-c', 'icns', ICONSET, '-o', path.join(OUT, 'icon.icns')]);
   fs.rmSync(ICONSET, { recursive: true, force: true });
-  console.log('wrote build/icon.png and build/icon.icns');
+  console.log('wrote build/icon.png and build/icon.icns from build/logo.png');
 } catch (e) {
-  console.log('wrote build/icon.png; iconutil is macOS-only, so no .icns here');
+  console.log('wrote build/icon.png from build/logo.png; iconutil is macOS-only, so no .icns here');
 }
