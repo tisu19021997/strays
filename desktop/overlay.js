@@ -23,6 +23,8 @@ setInterval(syncInteractive, RENEW_MS);
 const world = Strays.mount({
   // the window is the lane, whatever size the host has made it
   height: 'fill',
+  // STRAYS_DEBUG=1 makes every release explain itself — see the note in preload.js
+  debug: window.petsBridge.debug,
   onHoverChange: (hovering) => { petHover = hovering; syncInteractive(); },
   onPetClick: (session) => window.petsBridge.jumpToSession(session),
 });

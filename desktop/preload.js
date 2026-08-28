@@ -1,6 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('petsBridge', {
+  /*
+   * The renderer cannot read the environment, and console messages from it are
+   * forwarded to the terminal under STRAYS_DEBUG anyway — so this is the whole
+   * of what the lane needs to know to explain a throw it got wrong. Release
+   * latency is a property of the pointing device (a trackpad suppresses the end
+   * of a flick as the finger lifts, by an amount nothing here can derive), so
+   * the numbers have to come off the machine that felt it.
+   */
+  debug: !!process.env.STRAYS_DEBUG,
   onClaudeStatus: (cb) => ipcRenderer.on('claude-status', (_e, s) => cb(s)),
   onParty: (cb) => ipcRenderer.on('party', (_e, on) => cb(on)),
   onCelebrate: (cb) => ipcRenderer.on('celebrate', () => cb()),

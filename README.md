@@ -71,13 +71,19 @@ owners; all characters remain the property of their respective rights holders.
   the cats twist, Grep swings, Heisenbug just vibrates. Take it to the top of
   the display if you like. Dragging never opens the conversation; a click is a
   press that stays put.
-- **Then throw it.** Let go while you're moving and the pet keeps going — it
-  carries the momentum of your hand, arcing off like a thrown ball, turning over
-  in the air, skipping off the floor, coming off the walls and the top of the
+- **Then throw it.** Let go while your hand is moving and the pet keeps going —
+  it carries the momentum of your hand, arcing off like a thrown ball, turning
+  over in the air, skipping off the floor, coming off the walls and the top of the
   screen, and sliding to a stop. Sweep it across and it travels; flick it hard and
-  it crosses the display. Stop first and it just drops at your cursor. How fast
-  your hand was moving *is* the throw, so the same flick throws the same every
-  time.
+  it crosses most of the screen and bounces off the far wall. It leaves your hand
+  at the speed your hand was going, so there's no moment where it hangs back. You
+  don't have to release mid-flick, either — flick it and let go whenever you like,
+  because a flick leaves your hand the moment the flick ends rather than waiting
+  for your finger to come off the trackpad. Move it gently instead, or slow down
+  before you let go, and it's placed rather than thrown. Slow down before you let go and it's a gentle lob instead, and hold it
+  still for a moment and it's put down rather than thrown — which is how you put
+  a pet exactly where you want it. How fast your hand was moving *is* the throw,
+  so the same gesture throws the same every time.
 - **Say yes without switching windows.** When Claude asks permission for
   something, a little card pops up over the pets. Click Allow and carry on.
 - **Heisenbug keeps the receipts.** Hover her for today's tokens and roughly

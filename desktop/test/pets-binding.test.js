@@ -789,6 +789,31 @@ test('the pointer leaving the page puts the pet down', (t) => {
   assert.equal(pet.lift, 0, 'it is back on the floor');
 });
 
+test('and hands it back the moment the button is up', (t) => {
+  /*
+   * The other half of holding the pointer, and by far the more expensive one to
+   * get wrong. A claim the renderer never withdraws does not cost the lane, it
+   * costs every click on the machine — including the one that would reach the
+   * tray to quit strays. `world.pressed` extends the claim past the grab so that
+   * a flick released before the button does not hand a live drag to whatever is
+   * underneath; if it is never cleared, that extension is forever.
+   */
+  const hover = [];
+  const world = mountFollowing(t, { onHoverChange: (on) => hover.push(on) });
+  Strays.setSessions([session('alpha')]);
+  frame();
+  const pet = petFor(world, 'alpha');
+
+  dragTo(world, pet, centreOf(pet) + 60, world.h - 60);
+  fire('mouseup', {});
+  settle(world, pet);
+
+  hover.length = 0;
+  fire('mousemove', { clientX: -500, clientY: -500 });
+  frame();
+  assert.deepEqual(hover, [false], 'the pointer went back to the desktop');
+});
+
 test('a session ending mid-carry ends the carry', (t) => {
   const clicked = [];
   const world = mountFollowing(t, { onPetClick: (s) => clicked.push(s.id) });
@@ -1080,31 +1105,51 @@ test("a throw arcs the way a thrown ball arcs", (t) => {
    * breaks the second, flattening the descent into a straight line exactly where
    * the curve should be at its steepest.
    *
-   * Sampled over one free flight, and only while it really is free: touching the
-   * floor, a wall or the ceiling all end the sample, because all three are meant
-   * to bend the curve. Doing that by tuning the throw to miss them instead makes
-   * the test fail for the wrong reason the moment anyone touches gravity.
+   * Sampled over one free flight, and only while it really is free: the floor, a
+   * wall, the ceiling and terminal velocity all end the sample, because all four
+   * are meant to bend the curve. Doing that by tuning the throw to miss them
+   * instead makes the test fail for the wrong reason the moment anyone touches
+   * gravity — or, as it turns out, the throw cap, which decides how high the
+   * arc gets and so whether FALL_MAX is inside it at all. FALL_MAX is a sprite
+   * height a frame, so the sample can work out where it is from the pet.
    */
   const world = mountFullScreen(t, { pets: ['segfault'] }, 2160);
   frame();
   const pet = world.pets[0];
   pet.x = 60;
 
-  throwTo(world, pet, 130, world.h - 300, 12);
+  /*
+   * Carried up first — slowly, so the climb is not itself the throw — and then
+   * flicked upward with just enough sideways in it to have a horizontal speed
+   * worth holding constant.
+   *
+   * The height is what makes the sample worth taking. A throw from the floor at
+   * THROW_MAX rises 250px and comes back at 1400px/s, which is too small a
+   * flight to tell a parabola from a straight line; from up here the descent
+   * passes 2000px/s while staying clear of FALL_MAX, so the frames where a cap
+   * would flatten the curve are inside the sample rather than beyond it.
+   */
+  dragTo(world, pet, centreOf(pet), world.h - 900, 120);
+  const releasedAt = pet.lift;
+  dragOn(world, world.mouse.x + 12, world.mouse.y - 120, 3);
+  fire('mouseup', {});
 
   const wall = world.w - widthOf(pet) - 6;
+  const terminal = pet.sprites.walk1.length * pet.scale * 60; // FALL_MAX's own derivation
   const xs = [], lifts = [];
   for (let i = 0; i < 400; i++) {
     frame();
     if (pet.lift <= 0) break;                                   // the floor
     if (pet.x <= 6.001 || pet.x >= wall - 0.001) break;          // a wall
     if (pet.lift >= liftCeilingOf(world, pet) - 0.001) break;    // the ceiling
+    if (pet.vy >= terminal - 0.5) break;                         // terminal velocity
     xs.push(pet.x);
     lifts.push(pet.lift);
   }
 
   assert.ok(lifts.length > 40, `a flight worth measuring (${lifts.length} frames)`);
-  assert.ok(Math.max(...lifts) > 500, 'that actually went up');
+  assert.ok(Math.max(...lifts) - releasedAt > 150,
+    `that actually went up (${Math.round(Math.max(...lifts) - releasedAt)}px above the release)`);
 
   const diff = (a) => a.slice(1).map((v, i) => v - a[i]);
   const dx = diff(xs);
@@ -1122,9 +1167,11 @@ test("a throw arcs the way a thrown ball arcs", (t) => {
     `gravity is the same every frame (${accel.toExponential(2)}px/frame² of variation)`);
   assert.ok(d2lift[0] < 0, 'and it pulls down');
 
-  // and the steepest part of it is fast enough that a cap would have shown up
+  // and the steepest part of it is fast enough that a cap would have shown up:
+  // FALL_MAX is 2400, and this gets close enough to it that flattening there
+  // would be inside the frames the constant-acceleration assertion just read
   const fastest = Math.max(...diff(lifts).map((d) => -d)) * 60;
-  assert.ok(fastest > 1500, `it was really moving by the end (${Math.round(fastest)}px/s)`);
+  assert.ok(fastest > 1800, `it was really moving by the end (${Math.round(fastest)}px/s)`);
 });
 
 test('a throw comes back down while you are still watching it', (t) => {
@@ -1136,6 +1183,13 @@ test('a throw comes back down while you are still watching it', (t) => {
    * throw ended against a wall and none of them looked thrown. This is a floor
    * under that, not a tuning fork: it fails for a value that is wrong, not for
    * one that is merely different.
+   *
+   * The bound tracks `THROW_MAX`, because hang time is linear in release speed:
+   * at a cap of 1800 a wrong gravity hung for 2.8s, at 1000 the same wrongness
+   * hung for 1.8s and slipped under a two-second bound, and at 2400 the *right*
+   * gravity holds a hard lob up for 1.8s of its own. Two and a half seconds is
+   * the line at this cap — g=1200 takes 3.0s. Re-derive it if the cap moves;
+   * a bound the cap has made unfailable looks exactly like a passing test.
    */
   const world = mountFullScreen(t, { pets: ['segfault'] });
   frame();
@@ -1149,8 +1203,8 @@ test('a throw comes back down while you are still watching it', (t) => {
   while (frames < 400 && pet.lift > 0) { frame(); frames++; }
 
   assert.ok(pet.lift <= 0, 'it came down');
-  assert.ok(frames < 120,
-    `and inside two seconds (${frames} frames, ${(frames / 60).toFixed(2)}s)`);
+  assert.ok(frames < 150,
+    `and inside two and a half seconds (${frames} frames, ${(frames / 60).toFixed(2)}s)`);
 });
 
 test('nothing falls so fast that its own frames stop touching', (t) => {
@@ -1234,7 +1288,11 @@ test('a pet swept along the floor at a hand\'s pace keeps its momentum', (t) => 
    * So this pins the ordinary case in the pet's own units, and does it at a speed
    * chosen to be well clear of the cap.
    */
-  const world = mountFullScreen(t, { pets: ['segfault'] });
+  // in a lane wide enough that it never reaches a side, for the same reason the
+  // bounce test below needs one: `WALL_BOUNCE` takes 40% of the forward speed, and
+  // in the default 800px lane that wall was most of what this measured — which is
+  // what made it read as a friction regression when the friction was right
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
   frame();
   const pet = world.pets[0];
   pet.x = 60;
@@ -1243,8 +1301,7 @@ test('a pet swept along the floor at a hand\'s pace keeps its momentum', (t) => 
   const speed = throwTo(world, pet, centreOf(pet) + 400, world.h - 5, 40);
   assert.ok(speed > 500 && speed < 700, `an ordinary sweep (${Math.round(speed)}px/s)`);
 
-  // distance covered, not where it ended up: the test lane is 800px wide, so a
-  // real sweep reaches the far side and comes back off it
+  // distance covered rather than where it ended up: it bounces on the way
   let carried = 0, last = pet.x;
   for (let i = 0; i < 1200 && (pet.state === 'falling' || pet.lift > 0); i++) {
     frame();
@@ -1291,6 +1348,325 @@ test('a bounce carries a pet on rather than stopping it', (t) => {
   assert.ok(before > 100, `it flew before it landed (${Math.round(before)}px)`);
   assert.ok(after > before * 1.5,
     `and the bouncing carried it further still (${Math.round(before)}px flying, ${Math.round(after)}px after)`);
+});
+
+test('a hand that stops before letting go is still throwing', (t) => {
+  /*
+   * The fault that made every other measurement in this file look fine while
+   * the thing felt dead in the hand — and the reason it was invisible.
+   *
+   * The throw was the last 90ms of *wall clock*, and almost nobody releases the
+   * button during the sweep: you sweep, you stop, you let go. A stop of 90ms was
+   * enough for that window to hold nothing but stationary samples, so an ordinary
+   * 600px/s sweep threw the pet 16px — a drop. A tenth of a second is inside
+   * ordinary button-release latency, so most throws silently were not throws.
+   *
+   * No test could see it, because every one of them releases on the same frame
+   * as its last mousemove. That is what dragTo does, and it is the gesture no
+   * hand performs. The pause here is the whole test.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+
+  const sweepThenWait = (stillFrames) => {
+    pet.x = 300; pet.lift = 0; pet.state = 'sit';
+    pet.vx = 0; pet.vy = 0; pet.spin = 0; pet.tumble = 0; pet.tilt = 0;
+    dragTo(world, pet, centreOf(pet) + 400, world.h - 5, 40); // 400px in 40 frames: ~600px/s
+    for (let i = 0; i < stillFrames; i++) frame();            // ...then the hand rests
+    fire('mouseup', {});
+    const speed = Math.abs(pet.vx);
+    settle(world, pet, 1200);
+    return speed;
+  };
+
+  const immediate = sweepThenWait(0);
+  const sixtyMs = sweepThenWait(4);
+  assert.ok(immediate > 400, `released mid-sweep, it throws (${Math.round(immediate)}px/s)`);
+  /*
+   * Both bounds are the point. A 66ms pause has to leave a *throw* — under the
+   * wall-clock window it left 20% of one, which is a drop — and it also has to
+   * leave less than the whole thing, because what is left of the throw is the
+   * size of the hitch when the pet was visibly frozen for those 66ms. One
+   * half-life is 55ms, so this is about two thirds.
+   */
+  assert.ok(sixtyMs > immediate * 0.5,
+    `a 66ms pause is still a throw (${Math.round(sixtyMs)} of ${Math.round(immediate)}px/s)`);
+  assert.ok(sixtyMs < immediate * 0.85,
+    `and it does cost something (${Math.round(sixtyMs)} of ${Math.round(immediate)}px/s)`);
+});
+
+test('but a pet held still for a moment is being put down, not thrown', (t) => {
+  // the other side of the grace, and it has to reach exactly zero: a pet placed
+  // deliberately that slides away from where you put it is the same bug as one
+  // that will not throw, in the other direction
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  dragTo(world, pet, centreOf(pet) + 400, world.h - 5, 40);
+  for (let i = 0; i < 30; i++) frame(); // half a second of stillness
+  fire('mouseup', {});
+
+  assert.equal(pet.vx, 0, 'nothing left of the sweep');
+  const from = pet.x;
+  settle(world, pet, 1200);
+  assert.ok(Math.abs(pet.x - from) < 2, `and it stays where it was put (${Math.round(pet.x - from)}px)`);
+});
+
+test('a pet pinned against the edge of the lane does not launch off it', (t) => {
+  /*
+   * The bug behind "it freezes for 0.1s then it flies".
+   *
+   * A carried pet stops at the edge of the lane while the pointer carries on
+   * past it — and a flick on a trackpad runs the cursor into the edge of the
+   * screen constantly. The pet is then visibly motionless, and it used to leave
+   * at 1676px/s all the same, because the window was fed by asking *the pet*
+   * whether it had moved: a pinned frame looked like a resting hand, recorded
+   * nothing, and left the pre-pin samples standing as the gesture.
+   *
+   * Asked of the pointer, those frames are samples that happen to record a
+   * position that has not changed, so the measured speed bleeds away over
+   * THROW_WINDOW — which is what the eye saw happen.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 1512);
+  frame();
+  const pet = world.pets[0];
+
+  const wall = world.w - widthOf(pet) - 6;
+  const flickIntoWall = (pastFrames) => {
+    pet.x = 900; pet.lift = 0; pet.state = 'sit';
+    pet.vx = 0; pet.vy = 0; pet.spin = 0; pet.tumble = 0; pet.tilt = 0;
+    fire('mousemove', { clientX: centreOf(pet), clientY: world.h - 5 });
+    fire('mousedown', {});
+    let x = centreOf(pet), pinned = 0;
+    for (let i = 0; i < 40 && pinned < pastFrames; i++) {
+      x += 2000 / 60; // ~2000px/s, straight at the wall and then past it
+      fire('mousemove', { clientX: x, clientY: world.h - 5 });
+      frame();
+      if (pet.x >= wall - 0.01) pinned++;
+    }
+    assert.equal(pinned, pastFrames, 'the pet really did end up pinned');
+    fire('mouseup', {});
+    const speed = Math.abs(pet.vx);
+    settle(world, pet, 1200);
+    return speed;
+  };
+
+  // a hundred milliseconds of a pet sitting still against the wall
+  assert.ok(flickIntoWall(6) < 300,
+    'six frames pinned and it is not a throw any more');
+  // and by the time the window has turned over there is nothing left at all
+  assert.ok(flickIntoWall(8) < 60,
+    'eight frames pinned and it stays where it was pressed');
+});
+
+test('a flick leaves when the flick ends, not when the button comes up', (t) => {
+  /*
+   * Measured on a Force Touch trackpad, with STRAYS_DEBUG=1:
+   *
+   *   [throw] still 158ms gesture 6900px per s x0.21 -> 494px per s
+   *
+   * The pointer stops reporting movement 158 to 200ms before the mouseup lands,
+   * and for all of it the pet is glued to a finger that has already stopped —
+   * reported as "it freezes for 0.1s then it flies". Nothing about how *much* is
+   * thrown can fix that: throw hard at the end of the pause and it is a jump cut,
+   * throw softly and there was no point flicking.
+   *
+   * So a flick is released when the flick ends. What this pins is that the pet is
+   * gone before the button is heard from, and that the lane still holds the
+   * pointer when it happens — the finger is down and still moving, and handing
+   * that half of a drag to whatever is underneath is the stuck-pet failure again,
+   * this time in someone else's window.
+   */
+  const hover = [];
+  const clicked = [];
+  const world = mountFullScreen(t, {
+    pets: ['segfault'],
+    onHoverChange: (on) => hover.push(on),
+    onPetClick: (sess) => clicked.push(sess.id),
+  }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+  pet.session = session('alpha'); // so a stray click would be visible
+
+  // ~2500px/s, and then the hand stops dead: a finger leaving a trackpad
+  dragTo(world, pet, centreOf(pet) + 500, world.h - 5, 12);
+  assert.equal(pet.state, 'held', 'it is being carried');
+  hover.length = 0;
+
+  for (let i = 0; i < 3; i++) frame(); // 50ms of a stopped hand, button still down
+
+  assert.equal(world.grab, null, 'the pet has left the hand');
+  assert.equal(pet.state, 'falling', 'and it is in the air');
+  assert.ok(Math.abs(pet.vx) > 1500,
+    `at the speed of the gesture (${Math.round(Math.abs(pet.vx))}px/s)`);
+
+  /*
+   * And the finger keeps going, because it is still down — which is the moment
+   * the lane could drop the pointer. Hover is only recomputed on a move, so this
+   * has to be a real one: a test that only steps frames here cannot see it, and
+   * did not.
+   */
+  fire('mousemove', { clientX: world.mouse.x + 30, clientY: world.h - 5 });
+  frame();
+  assert.ok(!hover.includes(false),
+    'and the lane still has the pointer, because the finger is still down');
+
+  // ...and the mouseup, whenever it turns up, has nothing left to do
+  const flying = pet.vx;
+  fire('mouseup', {});
+  assert.equal(pet.vx, flying, 'the button does not re-throw it');
+  assert.deepEqual(clicked, [], 'nor read a thrown pet as a click');
+});
+
+test('but a carry that is merely paused is still a carry', (t) => {
+  /*
+   * The other side of FLICK_MIN, and the whole reason there is a threshold.
+   * Placing a pet means aiming, and aiming means slowing down, so the window
+   * averages the slowing tail: the flicks off the trackpad above measured 1560
+   * and 6900px/s, and a pet being carefully put down measures a couple of
+   * hundred. A pet must not launch itself out of a hand that paused to think.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  dragTo(world, pet, centreOf(pet) + 400, world.h - 5, 40); // ~600px/s
+  for (let i = 0; i < 30; i++) frame();                     // half a second of thought
+
+  assert.ok(world.grab, 'still in hand after half a second of stillness');
+  assert.equal(pet.state, 'held', 'and still being carried');
+
+  fire('mouseup', {});
+  assert.equal(pet.vx, 0, 'and then put down, not thrown');
+});
+
+test('a hard flick leaves the hand at the speed of the hand', (t) => {
+  /*
+   * The anti-lag test, and the one that was missing when the cap came down to
+   * 1000.
+   *
+   * A carried pet sits exactly under the pointer, so if it leaves at less than
+   * the speed the hand was going, the cursor visibly pulls away from it — and
+   * that reads as the pet hanging back rather than as a soft throw. At a cap of
+   * 1000 a 2000px/s flick left at half the hand's speed, and the report was "when
+   * I release there is a delay, not like throwing a ball".
+   *
+   * The bound is deliberately a fraction of a *stated* hand speed rather than an
+   * absolute: 2000px/s is a brisk flick that a trackpad produces without trying,
+   * and the point is that nothing between the hand and the pet is holding it
+   * back.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  const hand = 2000; // 200px in 6 frames
+  const release = throwTo(world, pet, centreOf(pet) + 200, world.h - 5, 6);
+  assert.ok(release > hand * 0.85,
+    `it leaves at the hand's speed (${Math.round(release)}px/s of ${hand})`);
+});
+
+test('and no throw outruns the lane it is drawn in', (t) => {
+  /*
+   * Where the cap's *value* comes from, as opposed to its existence.
+   *
+   * `FALL_MAX` is a sprite height a frame, because past that successive positions
+   * stop touching and motion reads as a jump cut rather than as movement. A throw
+   * is no more legible than a fall, so the lane has one speed limit in every
+   * direction and the throw is held to it — which is checkable from the pet's own
+   * geometry rather than by repeating the number.
+   *
+   * Both halves matter. Without the ceiling a savage flick is a jump cut; without
+   * "it really reached it" the cap could be anything lower, which is the lag.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  const limit = pet.sprites.walk1.length * pet.scale * 60; // FALL_MAX's own derivation
+  const release = throwTo(world, pet, centreOf(pet) + 600, world.h - 5, 6); // ~6000px/s
+
+  assert.ok(release <= limit + 1,
+    `held to a sprite height a frame (${Math.round(release)} of ${limit}px/s)`);
+  assert.ok(release > limit - 1,
+    `and a hand that fast really does reach it (${Math.round(release)}px/s)`);
+});
+
+test('an ordinary sweep does not somersault', (t) => {
+  /*
+   * The middle of the tumble's range, which is the only place the coefficient
+   * shows. `SPIN_PER_SPEED` is per px/s of release speed, so it has to be
+   * revisited whenever `THROW_MAX` moves — and the two tests either side of this
+   * one cannot see that: a hard throw saturates `SPIN_MAX` at any sane value, and
+   * a pet set down gently barely turns at any value at all. At 0.0065, which is
+   * what a cap of 1000 wanted, being swept across a desk at 600px/s put a pet
+   * into `TUMBLE_MAX` — spinning like a top for having been moved.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  withoutLuck(() => {
+    throwTo(world, pet, centreOf(pet) + 400, world.h - 5, 40); // ~600px/s
+    const seen = untilStill(world, pet);
+    // measured: 0.45rad at 0.0035, and 0.75 at the 0.0065 a cap of 1000 wanted.
+    // A hard flick is 1.15 at both — saturated, which is why it cannot see this.
+    assert.ok(seen.maxTilt > 0.15, `it does turn (${seen.maxTilt.toFixed(2)} rad)`);
+    assert.ok(seen.maxTilt < 0.6,
+      `but an ordinary sweep is not a somersault (${seen.maxTilt.toFixed(2)} rad)`);
+  });
+});
+
+test('and the hardest flick there is still comes to rest', (t) => {
+  /*
+   * The other end of the same lever, and what `GROUND_GOVERNOR` is for.
+   *
+   * Letting the pet leave at the speed of the hand is what makes a throw feel
+   * like a throw, and on its own it is also the cannon: sliding friction is a
+   * constant, so carry distance goes as the *square* of release speed, and the
+   * hardest flick a trackpad produces slid 4528px over 3.9 seconds — across the
+   * display and back off both walls, at a barely-changing speed the whole way,
+   * which is the least ball-like thing in the lane.
+   *
+   * So the ground sheds a cubic term as well. It is a governor rather than
+   * physics: 5e-7·v³ is 108px/s² against an ordinary 600px/s sweep — a ninth of
+   * the carry, which is nothing — and 6912px/s² at the cap, which is most of it.
+   * A bracket rather than a tuning fork: the floor is there because a governor
+   * strong enough to make a hard flick feel like a nudge is the older bug back.
+   */
+  const world = mountFullScreen(t, { pets: ['segfault'] }, FULL_LANE_H, 2560);
+  frame();
+  const pet = world.pets[0];
+  pet.x = 300;
+
+  // ~2500px/s, flat: the hardest throw anyone makes, and all of it on the floor
+  // where the governor lives. A lob spends its travel in flight instead, which is
+  // bounded by gravity and the ceiling and has its own tests.
+  dragTo(world, pet, centreOf(pet) + 500, world.h - 5, 12);
+  fire('mouseup', {});
+
+  let travelled = 0, last = pet.x, frames = 0;
+  for (let i = 0; i < 1500 && (pet.state === 'falling' || pet.lift > 0); i++) {
+    frame();
+    frames++;
+    travelled += Math.abs(pet.x - last);
+    last = pet.x;
+  }
+  const bodies = travelled / widthOf(pet);
+
+  assert.ok(bodies > 10, `a hard throw really travels (${bodies.toFixed(1)} body lengths)`);
+  assert.ok(bodies < 35,
+    `and stops inside a screen rather than pinballing (${bodies.toFixed(1)} body lengths)`);
+  assert.ok(frames < 180,
+    `in three seconds, not four (${frames} frames, ${(frames / 60).toFixed(1)}s)`);
 });
 
 test('and a pet set down without moving does not slide at all', (t) => {

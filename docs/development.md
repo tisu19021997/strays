@@ -522,32 +522,256 @@ in the lane is painted white.
   only after writing that did the mutant die. Both tests are kept; only one of
   them was ever load-bearing.
 
-  **The window is wall clock, so stopping before you let go means no throw — and
-  that is the current intent.** Since `THROW_WINDOW` is 90ms and that is inside
-  ordinary button-release latency, most releases contain only stationary samples
-  and the pet just drops. Which is what is wanted: drop and bounce.
+  **The window is a window of *movement*, and the throw is faded by how long the
+  hand has rested.** That is the third answer to one question — *did that release
+  mean throw* — and the first two were both bugs you could feel.
 
-  It was briefly the other way. Recording movement only, and fading the throw by
-  how long the hand had rested, removed the dead zone completely — and made every
-  release carry the full speed of the sweep, which read as firing a cannon. That
-  is `bdfa0ad`, since reverted, and the numbers are in both commit messages if
-  it is ever worth revisiting.
+  Measured over the last `THROW_WINDOW` of **wall clock**, there was a dead zone
+  sitting directly on top of the commonest gesture there is. Almost nobody
+  releases the button *during* the sweep: you sweep, you stop, you let go. A stop
+  of 90ms was enough for the window to hold nothing but stationary samples, so the
+  throw came out as exactly zero — and 90ms is inside ordinary button-release
+  latency, so most throws silently were not throws. Measured on the bench: an
+  ordinary 600px/s sweep released 66ms after the hand stopped carried **16px**,
+  and one that decelerated to rest first carried 26px. Both of those are drops.
 
-  **The rough edge is worth knowing about before you trip over it.** The cutoff is
-  abrupt, and it sits inside human latency: a release made while the hand is still
-  moving throws at up to 1800px/s, and the same intended gesture a tenth of a
-  second later throws nothing at all. The stillness fade is the right shape for
-  fixing that, but only together with a much lower `THROW_MAX` — putting the fade
-  back on its own is the cannon again.
+  Removing the dead zone *alone* was the other failure, and it shipped as v1.3.2.
+  Every release then carried the full speed of the sweep against a cap of
+  1800px/s, so putting a pet down looked like firing it (`bdfa0ad`, reverted in
+  `80628a4`).
 
-  **And no test can see any of it.** Every test here releases on the same frame as
-  its last `mousemove`, because that is what `dragTo()` does and what a fixed-step
-  harness makes easy — so they all measure a gesture no hand performs. Both throw
-  faults in this file's history were found instead by driving the real `tick()`
-  from a simulated `requestAnimationFrame` with pointer events on their own 125Hz
-  clock. The bug lived in the gap between the pointer's clock and the render
-  loop's, and nothing that ties those two together can show it to you. Be
-  suspicious of any input test whose events are synchronised to frames.
+  So both halves are in now. A frame in which the hand did not move records
+  nothing and accumulates `g.still`; `throwFrom()` scales the throw by it — full
+  for a 33ms plateau, then halving every `THROW_HALF_LIFE` (55ms), and nothing by
+  `THROW_GRACE_ZERO`. Three intentions come off one gesture, which is what makes
+  it feel like a hand rather than a switch:
+
+  | what the hand did | what happens |
+  | --- | --- |
+  | let go mid-sweep, or a frame or two after | the throw, at the sweep's speed |
+  | slowed down before letting go | the window averages the slowing: a lob |
+  | held it still for a moment | nothing — a person putting a pet down |
+
+  **The decay is the fix for the report after that one: "it freezes for 0.1s then
+  it flies".** It was a plateau of 80ms and then a linear ramp, which meant a hand
+  that had *visibly stopped* still threw at full speed — so the pet sat frozen for
+  a tenth of a second and then launched, which is a discontinuity the eye reads as
+  a fault even though every number in it was the number we wanted.
+
+  A decay fixes that in principle rather than by tuning, because the hitch is
+  proportional to what gets thrown. Freeze for longer, and there is less left to
+  fly with:
+
+  | pointer stopped this long before the button came up | a 2000px/s flick leaves at |
+  | --- | --- |
+  | 0–33ms | 2000px/s — 33px a frame |
+  | 67ms | 1308px/s — 22px a frame |
+  | 100ms | 860px/s — 14px a frame |
+  | 200ms | 244px/s — 4px a frame |
+  | 300ms | nothing; it is put down |
+
+  That property is what makes it safe against hardware we cannot see. **Release
+  latency belongs to the pointing device**: a trackpad suppresses the end of a
+  flick as the finger lifts, by an amount that is a property of the pad and is not
+  derivable from anything in the lane. Under a plateau, a device with a 100ms lift
+  meant every throw was a hitch; under a decay, that device throws at 43% and the
+  hitch is 43% as big.
+
+  **And there was a second freeze, which was a modelling error rather than a
+  tuning one.** "Did the hand move" was asked of the *pet*:
+
+  ```js
+  if (Math.abs(nx - was.x) > 0.01 || ...)   // wrong: the pet is clamped to the lane
+  if (Math.abs(world.mouse.x - g.mx) > 0.01 || ...)   // right: the hand is not
+  ```
+
+  A carried pet stops at the edge of the lane while the pointer carries on past
+  it, and a trackpad flick runs the cursor into the edge of the screen constantly.
+  Asked of the pet, every pinned frame looked like a resting hand: it recorded
+  nothing, so the pre-pin samples stood as the gesture, and a pet that had been
+  motionless against the wall for 100ms still left it at **1676px/s** — frozen,
+  then flying, from a standing start against a wall.
+
+  Asked of the pointer, those frames are samples like any other; they just happen
+  to record a position that has not changed, which is exactly what the eye saw. The
+  measured speed then bleeds away over `THROW_WINDOW` on its own, **per axis**, so
+  a pet dragged along the ceiling still throws sideways. The same pin now throws
+  nothing, and it degrades smoothly on the way: 33ms pinned throws 1304px/s, 67ms
+  throws 504, 100ms throws 0.
+
+  The general lesson is worth more than the fix: `g.hist` and `g.still` answer
+  different questions and so have to be fed from different places. The history is
+  *what the pet did*, because that is what the eye saw and what the throw has to
+  continue. The stillness is *how long since the hand did anything*, because that
+  is what says whether the gesture is over.
+
+  **Then the measurement arrived, and it moved the problem.** With the logging
+  below turned on, a Force Touch trackpad said this:
+
+  ```
+  [throw] still 158ms gesture 6900px/s x0.21 -> 494px/s over 11 samples of 83ms
+  [throw] still 200ms gesture 1560px/s x0.12 -> 190px/s over 11 samples of 84ms
+  ```
+
+  Three things in it. The gesture is measured correctly and is *enormous*. The
+  sample spacing — 11 in 84ms — is a 120Hz display. And `still` is **158 to
+  200ms**: the pointer stops reporting movement that long before the mouseup
+  arrives, which is ten to twelve frames at 60Hz and twice that at 120. For all
+  of it the pet is glued to a finger that has already stopped. That is faithful
+  and it is horrible, and *no value of any constant here fixes it*, because the
+  freeze is the pet honouring a hand that is no longer moving it. Throw hard at
+  the end of the pause and the pause is a jump cut; throw softly and there was no
+  point flicking.
+
+  **So a flick is released when the flick ends.** `FLICK_SETTLE` (40ms) of
+  stillness behind a gesture faster than `FLICK_MIN` (1200px/s) and the pet leaves
+  then and there; the mouseup that eventually turns up finds no grab, so
+  `releaseGrab` returns null and `onUp` cannot read it as a click. Which is what
+  throwing is anyway — the ball leaves your hand while your hand is still moving,
+  and does not wait for the gesture to finish.
+
+  | gesture, on a pad with 158–200ms of release latency | before | after |
+  | --- | --- | --- |
+  | 6900px/s flick | froze 158ms, threw 0px/s | froze 42ms, threw 2152px/s |
+  | 1560px/s flick | froze 200ms, threw 0px/s | froze 42ms, threw 1399px/s |
+  | 600px/s sweep, then a pause | 0px/s | put down — still a carry |
+  | carried and aimed to a stop | 0px/s | put down |
+
+  **`FLICK_MIN` is the whole reason a carry is still a carry.** Placing a pet
+  means aiming, and aiming means slowing down, so the window averages the slowing
+  tail and comes out around 75px/s *however fast the carry started* — against
+  1560 and 6900 for the two real flicks. There is a lot of room between those,
+  which is why the threshold can be a plain number. Without it, a pet launches
+  itself out of a hand that paused to think.
+
+  `FLICK_SETTLE` is then as short as it can be without firing inside a gesture:
+  40ms is two and a half frames at 60Hz, under the threshold where a pause reads
+  as a hitch, and nothing a hand does mid-sweep. It also sits just past
+  `THROW_GRACE_FULL`, so the decay takes 8% off a flick release and needs no
+  special case — a flag for that difference was written, found to be
+  unfalsifiable by any test, and deleted.
+
+  **The pointer lease had to grow to cover it.** Between the flick leaving and the
+  button coming up there is no grab, but the finger is down and still moving.
+  `onMove` therefore holds the lane while `world.pressed` is set, not just while
+  there is a grab: handing that half of a drag to whatever is underneath is the
+  stuck-pet failure again, in someone else's window. Both directions are tested,
+  and the *clearing* is the important one — a claim the renderer never withdraws
+  costs every click on the machine, which is the failure `pointer-guard.js` exists
+  for.
+
+  **One consequence to know about:** the cap and the fade can no longer both bind.
+  Everything over `FLICK_MIN` now leaves when it stops moving, so what reaches the
+  fade is slow enough that `THROW_MAX` was never going to clip it. The
+  cap-then-fade order is kept because it is the honest one, and its test was
+  deleted rather than left in place unable to fail.
+
+  **And do not "restore the old behaviour".** Replaying that logged gesture
+  against every published engine — the bench does this straight out of `git show`
+  — gives 0px/s on v1.3.0, v1.3.1, v1.3.3 and v1.6.1. The only published version
+  that threw for it at all was v1.3.2, the one reverted for being a cannon. There
+  is nothing behind us to go back to, and a remembered good throw on this hardware
+  was not this code.
+
+  **`STRAYS_DEBUG=1` is what made all of that knowable**, because both numbers
+  that decide how a throw feels are invisible from the outside:
+
+  ```
+  [overlay] [throw] still 104ms gesture 1820px/s x0.43 -> 780px/s over 5 samples of 84ms
+  ```
+
+  A release with the button still down is marked `flick`. `preload.js` carries the
+  flag into the renderer (which cannot read the environment), and `main.js`
+  already forwards renderer console messages to the terminal under the same flag.
+
+  When a throw feels wrong on someone's machine, this is the difference between
+  measuring it and guessing. Two rounds of careful reasoning were spent tuning
+  constants against a release latency nobody had measured, and both were wrong;
+  the third round started with four log lines and found a cause no amount of
+  tuning could have reached. **Ask for the log first.**
+
+  **The cap is applied first and the fade second.** Fade the raw gesture speed
+  instead and the cap hides the fade for exactly the gestures that need it: a
+  2500px/s flick is still over `THROW_MAX` after two thirds of the fade, so a
+  pause the user can plainly see would do nothing at all until it was nearly over.
+  It is pinned by *"and a pause takes the sting out of a hard flick too"*.
+
+  **How fast a throw leaves and how far it goes are two separate levers, and
+  using one for the other has now been the bug in both directions.**
+
+  `THROW_MAX` was lowered to 1000 to bound the travel, and that produced the next
+  report: *"when I release there is a delay, not like throwing a ball"*. The
+  mechanism is worth understanding, because nothing in the code looks slow — the
+  release path is `mouseup` → `throwFrom()` → `state = 'falling'`, all in one
+  frame. A carried pet sits **exactly** under the pointer. So if it leaves slower
+  than the hand was moving, the cursor pulls away from it in front of your eyes,
+  and that does not read as a gentle throw — it reads as the pet hanging back. At
+  a cap of 1000 a 2000px/s flick left at half the hand's speed and a 2500px/s one
+  at 40%.
+
+  It is also the worst available lever for distance. Carry distance goes as the
+  *square* of release speed, so the cap costs the feel of every throw under it in
+  order to bound the few over it.
+
+  So the cap is now **derived**: `THROW_MAX = FALL_MAX`. A sprite height a frame
+  is where successive positions stop touching and movement becomes a jump cut, and
+  a throw is no more legible than a fall, so the lane has one speed limit and it
+  points in every direction. A trackpad flick with pointer acceleration behind it
+  beats it easily — that is fine, and it is the only thing that gets clipped: a
+  2500px/s flick leaves at 96% of the hand.
+
+  **Distance is `GROUND_GOVERNOR`'s job instead** — a cubic term, `5e-7·v³`, added
+  to the constant friction on the floor:
+
+  | | ordinary sweep, 600px/s | hardest flat flick, capped |
+  | --- | --- | --- |
+  | constant friction only | 394px, 1.3s | 4528px, 3.9s |
+  | with the governor | 360px, 1.2s | 1631px, 2.4s |
+
+  4528px is across the display and back off both walls at a barely-changing
+  speed, which is the least ball-like thing the lane can do; 1631px is a throw
+  that lands. And the ordinary sweep — the gesture the friction was tuned for in
+  the first place — pays 34px for it.
+
+  It is a **governor rather than physics**, and the exponent is the load-bearing
+  part. v² was tried first and took a *quarter* off the ordinary sweep, which is
+  the momentum bug back again: the term has to be invisible where hands actually
+  live (108px/s² at 600px/s, against 450 of real friction) and decisive at the top
+  (6912px/s² at the cap). `GROUND_FRICTION` keeps its own job unchanged — the even
+  slowing to a definite stop.
+
+  `SPIN_PER_SPEED` is per px/s of release speed and therefore has to be revisited
+  **every time the cap moves**. 0.0035 left a full-blooded throw leaning 0.4rad
+  when the cap was 1000; the 0.0065 that fixed that puts an *ordinary* sweep into
+  `TUMBLE_MAX` at a cap of 2400 — a pet spinning like a top for having been moved
+  across a desk. Neither end of the range can see it, which is why it now has a
+  test in the middle: a hard throw saturates `SPIN_MAX` at any sane value (1.15rad
+  either way) and a pet set down gently turns at none, so the assertion is on a
+  600px/s sweep, 0.45rad against the 0.75 of the wrong value.
+
+  **Anything measured against the release speed moves with `THROW_MAX`**,
+  including tests that name a distance or a duration — and a bound the cap has
+  made unfailable looks exactly like a passing test. The arc-size floor has now
+  been re-derived twice for this reason: "back down inside two seconds" at a cap
+  of 1800, which a cap of 1000 made unfailable (the wrong gravity it was written
+  to catch went from 2.8s to 1.8s), and now two and a half seconds at 2400, where
+  the *right* gravity holds a hard lob up for 1.8s of its own.
+
+  The **known extreme** is the hard 45° lob, which spends its travel in flight
+  rather than on the floor and so is bounded by gravity and the ceiling rather
+  than by the governor: around 3.8s and three screens of travel on a laptop, five
+  seconds on a large monitor. If that ever has to come down, the lever is a
+  `FLOOR_GRIP` that falls off with impact speed — a hard landing should scuff
+  rather than skip — and not the cap, for every reason above.
+
+  **And no test can see any of this if it releases on the same frame as its last
+  `mousemove`.** That is what `dragTo()` does and what a fixed-step harness makes
+  easy, so those tests all measure a gesture no hand performs — the pause is the
+  test. All three faults here were found instead by driving the real `tick()` from
+  a simulated `requestAnimationFrame` with pointer events on their own clock. The
+  bug lives in the gap between the pointer's clock and the render loop's, and
+  nothing that ties those two together can show it to you. Be suspicious of any
+  input test whose events are synchronised to frames.
 
   The cap is a **speed**, not a clamp per axis. Clamped per axis, the hardest
   throw in the lane is a diagonal one at √2 times the limit — a limit that only
@@ -573,8 +797,14 @@ in the lane is painted white.
   Worth knowing when tuning it: **the parabola property holds at any gravity**,
   because the shape of the curve is set by the launch angle. So the test for the
   curve cannot see a bad gravity value at all — the arc's *size* needed its own
-  assertion, and it is deliberately a floor ("back down inside two seconds")
-  rather than a tuning fork.
+  assertion, and it is deliberately a floor ("back down inside a second and a
+  quarter") rather than a tuning fork. The parabola test has a related trap: it
+  samples one free flight, and terminal velocity bends the curve as surely as the
+  floor does, so `FALL_MAX` ends the sample alongside the floor, the walls and the
+  ceiling. Tuning the throw to *miss* it instead makes that test fail for the
+  wrong reason the next time anyone touches gravity or the cap — and it works out
+  where terminal velocity is from the sprite's own height, which is where
+  `FALL_MAX` comes from too, rather than repeating the number.
 
   Then the flight has to end, in four different ways:
 
@@ -583,15 +813,16 @@ in the lane is painted white.
     quite settles is a pet that never gets back to walking.
   - **Walls and ceiling reflect** rather than clamp. The old `clamp` on `pet.x`
     silently ate the whole throw. The ceiling is not decoration either:
-    `liftCeiling` bounds a *carry*, and 1800px/s upward is well past the top of a
+    `liftCeiling` bounds a *carry*, and a hard throw upward clears the top of a
     display, so a thrown pet left the screen with its nameplate.
   - **Out of bounces is not stopped.** A level throw never earns an impact worth
     bouncing, so it lands on the frame it was released — without the `SLIDE_MIN`
     skid, every throw along the lane ended with the pet standing exactly where it
     was let go, which is the one case that read as a bug rather than as physics.
-  - **Friction is a constant deceleration, and a bounce hardly touches sideways
-    speed.** `GROUND_FRICTION` is px/s² rather than a proportion, and
-    `FLOOR_GRIP` is 0.92. See below — this was wrong twice.
+  - **Friction is a constant deceleration plus a cubic governor, and a bounce
+    hardly touches sideways speed.** `GROUND_FRICTION` is px/s² rather than a
+    proportion, `GROUND_GOVERNOR` bounds the top of the range without touching
+    the middle of it, and `FLOOR_GRIP` is 0.92. See below — this was wrong twice.
   - **`FALL_MAX`** is terminal velocity, and it is about legibility rather than
     realism: past it a pet crosses its own height in under two frames and is gone
     before its dust is drawn.
@@ -614,7 +845,8 @@ in the lane is painted white.
 
   **The lesson worth keeping is about the test, not the constants.** There *was*
   a skid test, and it passed throughout: it flicked hard enough to saturate
-  `THROW_MAX`, and at 1800px/s the pet carried 582px, which is plainly momentum.
+  `THROW_MAX`, and at the 1800px/s cap of the time the pet carried 582px, which
+  is plainly momentum.
   An ordinary hand sweep is about 600px/s, and that carried 181px — under three
   of the pet's own body lengths. Carry distance goes as the square of release
   speed, so the top of the range says almost nothing about the middle of it, and

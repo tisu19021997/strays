@@ -378,6 +378,7 @@
       ball: { x: 0, y: 0, vx: 0, vy: 0, held: null },
       mouse: { x: -9999, y: -9999, active: false },
       grab: null,         // the pet currently under a press; see grabPet()
+      pressed: false,     // a press that began on a pet and has not come up yet
       observed: true,
       lastMouseMove: 0,
       badFrames: 0,      // frames the draw loop threw out of; see tick()
@@ -783,8 +784,92 @@
    * depending on which frame the button happened to come up on, and smoothing
    * across the whole carry makes every flick come out the same gentle lob.
    */
-  const THROW_WINDOW = 0.09;  // s of pointer history a release is measured over
-  const THROW_MAX = 1800;     // px/s, as a speed rather than per-axis
+  const THROW_WINDOW = 0.09;  // s of pointer *movement* a release is measured over
+
+  /*
+   * How long a hand may rest before letting go and still be throwing.
+   *
+   * This is the third answer to one question — *did that release mean throw* —
+   * and both earlier ones were bugs anyone could feel.
+   *
+   * Measuring the last THROW_WINDOW of wall clock put a dead zone on top of the
+   * commonest gesture there is. Almost nobody releases the button *during* the
+   * sweep: you sweep, you stop, you let go — and a stop of 90ms was enough for
+   * the window to hold nothing but stationary samples, so the throw came out as
+   * exactly zero and the pet dropped where it stood. A tenth of a second is
+   * inside ordinary button-release latency, so most throws silently were not
+   * throws: a 600px/s sweep let go of 66ms later carried 16px.
+   *
+   * Removing the dead zone alone was the other failure. Every release then
+   * carried the full speed of the sweep at a cap of 1800px/s, and putting a pet
+   * down looked like firing it.
+   *
+   * So stationary frames are not recorded at all — the window is a window of
+   * movement — and how long the hand has rested scales the result instead:
+   * everything up to THROW_GRACE_FULL is a throw, and it tapers to nothing by
+   * THROW_GRACE_ZERO. That reads three intentions off the same gesture. Let go
+   * while moving, or a frame or two after: a throw. Slow down first and the
+   * window averages the slowing, so it is a lob. Hold it still for a moment and
+   * it is a person putting a pet down, which has to mean putting it down.
+   *
+   * **What is left of the throw halves as the hand rests, rather than holding
+   * and then ramping down.** A plateau of 80ms with a linear fade after it was
+   * the third failure of this thing: it meant a hand that had visibly stopped
+   * still threw at *full* speed, so the pet sat frozen for a tenth of a second
+   * and then flew — reported, exactly, as "it freezes for 0.1s then it flies".
+   *
+   * A decay is the honest shape, because the discontinuity the eye objects to is
+   * proportional to what is thrown. Freeze for longer and less is left, so the
+   * hitch shrinks with the thing that causes it, at whatever release latency the
+   * hardware happens to have — which matters because we do not get to know it: a
+   * trackpad suppresses the end of a flick as the finger lifts, and how much is
+   * a property of the pad, not of anything here.
+   *
+   * The 33ms plateau is two frames, which is genuine button-release latency, and
+   * it is what keeps the throw repeatable: inside it, the frame the button
+   * happens to come up on cannot change the result. THROW_GRACE_ZERO is the
+   * hard end, and by then a half-life of 55ms has left 2% anyway, so it costs
+   * nothing but says plainly that a held pet is put down.
+   */
+  const THROW_GRACE_FULL = 0.033; // s of stillness that costs the throw nothing
+  const THROW_HALF_LIFE = 0.055;  // s: what is left of the throw halves this often
+  const THROW_GRACE_ZERO = 0.30;  // s of stillness by which it is a set-down
+
+  /*
+   * ...and the case the decay cannot fix, because it is not about how much is
+   * thrown: **the gesture can end long before the button does.**
+   *
+   * Measured on a Force Touch trackpad — `STRAYS_DEBUG=1` prints it — the pointer
+   * stops reporting movement **158 to 200ms** before the mouseup arrives. That is
+   * ten to twelve frames at 60Hz and twice that at 120Hz, and for all of it the
+   * pet is glued to a finger that has already stopped. Faithful, and horrible:
+   * "it freezes for 0.1s then it flies". No amount of tuning helps, because the
+   * freeze *is* the pet honouring a hand that is no longer moving it — throw hard
+   * at the end and it is a jump cut, throw softly and there was no point flicking.
+   *
+   * So a flick is released when the *flick* ends. If the hand stops for
+   * FLICK_SETTLE while the gesture behind it was faster than FLICK_MIN, the pet
+   * leaves then and there, and the mouseup that eventually turns up has nothing
+   * left to do (releaseGrab returns null, so onUp does not read it as a click).
+   * Which is also what throwing is: the ball leaves your hand while your hand is
+   * still moving, and it does not wait for you to finish the gesture.
+   *
+   * The threshold is what keeps a *carry* a carry. Placing a pet means aiming,
+   * and aiming means decelerating, so the window averages the slowing tail and
+   * comes out in the hundreds — the two on the trackpad above measured 1560 and
+   * 6900px/s, and a pet being put down measures ~225. FLICK_MIN sits well clear
+   * of both. FLICK_SETTLE is then as short as it can be without firing inside a
+   * gesture: 40ms is two and a half frames of freeze at 60Hz, under the threshold
+   * where a pause reads as a hitch, and nothing a hand does mid-sweep.
+   */
+  const FLICK_SETTLE = 0.04; // s of stillness that ends a fast gesture
+  const FLICK_MIN = 1200;    // px/s: under this, a hand that stopped is placing
+  /*
+   * FLICK_SETTLE sits just past THROW_GRACE_FULL on purpose: a flick released
+   * because it ended is one THROW_HALF_LIFE-eighth into the decay, so the fade
+   * takes 8% off it and needs no special case. Moving FLICK_SETTLE far from the
+   * plateau would make one, and it would be a silent one.
+   */
 
   /*
    * The one place the curve is allowed to stop being a curve, and it is a
@@ -802,6 +887,29 @@
    * pet that teleports into the floor.
    */
   const FALL_MAX = 2400;
+
+  /*
+   * ...and the throw is held to the same limit, which is where this number comes
+   * from rather than taste. A throw is no more legible than a fall: past a sprite
+   * height a frame successive positions stop touching whichever direction they
+   * are going in, so the lane has **one** speed limit and this is it. As a speed
+   * rather than per axis, so a diagonal fling cannot make it √2 times bigger —
+   * clamped per axis the hardest throw available is a corner one.
+   *
+   * A hand beats it easily: a trackpad flick with pointer acceleration behind it
+   * is several thousand px/s. What matters is that nothing *below* the limit is
+   * held back, because a carried pet sits exactly under the pointer — so if it
+   * leaves slower than the hand was moving, the cursor visibly pulls away from
+   * it, and that reads as the pet hanging back rather than as a gentle throw.
+   * That is what a cap of 1000 did: a 2000px/s flick left at half the hand's
+   * speed and the throw felt delayed.
+   *
+   * It is emphatically **not** the lever for how far a throw travels. Distance
+   * goes as the square of release speed, so using the cap for distance costs the
+   * feel of every throw under it to bound the few over it; GROUND_GOVERNOR bounds
+   * the travel instead, and it can do it without touching the release at all.
+   */
+  const THROW_MAX = FALL_MAX; // px/s, as a speed rather than per-axis
 
   /*
    * ...and what happens when it arrives. A pet that stops dead on the floor is
@@ -853,6 +961,7 @@
    * and stops in a third of a second over one.
    */
   const GROUND_FRICTION = 450; // px/s², taken off horizontal speed on the floor
+  const GROUND_GOVERNOR = 5e-7; // px/s² per (px/s)³, on top of it
   const SLIDE_MIN = 30;        // px/s: slower than this and it has come to rest
   const LAND_DUST = 6;
 
@@ -870,6 +979,14 @@
    *
    * It costs nothing in the sprite cache: this is a rotate, not a new bitmap.
    * Keep it that way — see spriteBitmap().
+   *
+   * SPIN_PER_SPEED is per px/s of *release* speed, so it is paired with
+   * THROW_MAX and has to be revisited whenever that moves: what anyone can see
+   * is how far over the hardest throw turns, not the coefficient. It briefly went
+   * to 0.0065 for a cap of 1000, where 0.0035 left a full-blooded throw leaning
+   * 0.4rad rather than turning over; against a cap of 2400 that same 0.0065 puts
+   * an *ordinary* sweep into TUMBLE_MAX, which is a pet spinning like a top for
+   * having been moved across a desk.
    */
   const SPIN_PER_SPEED = 0.0035; // rad/s per px/s of release speed
   const SPIN_MAX = 6;            // rad/s
@@ -981,10 +1098,58 @@
     pet.x = nx;
     pet.lift = nlift;
 
-    // where the pointer has been, for the throw. Trimmed to the window rather
-    // than to a count, so it means the same thing at any frame rate.
-    g.hist.push({ x: nx, lift: nlift, t: world.time });
-    while (g.hist.length > 2 && world.time - g.hist[0].t > THROW_WINDOW) g.hist.shift();
+    /*
+     * Where the pet has been, for the throw — a window of *movement*, so a hand
+     * that comes to rest before letting go does not quietly erase it. A frame in
+     * which the hand did not move records nothing and counts towards `still`
+     * instead, which is what throwFrom() decays the throw by.
+     *
+     * **"Did the hand move" is asked of the pointer, and "where has the pet
+     * been" is answered by the pet.** Those look like one question and are two,
+     * and the case that separates them is a pet pinned against the edge of the
+     * lane while the finger carries on past it. Asking the *pet* whether it
+     * moved, that frame is stillness — so the window keeps the samples from
+     * before the pin, at the speed of the sweep that reached it, and the pet sat
+     * frozen against the wall and then launched off it. Asking the pointer, the
+     * frame is a sample like any other; it just happens to record a position
+     * that has not changed, which is exactly what the eye saw. The measured
+     * speed then bleeds to nothing over THROW_WINDOW, per axis and on its own,
+     * so a pet dragged along the ceiling still throws sideways.
+     *
+     * Trimmed against the newest entry rather than against world.time, because
+     * once the pointer stops those two stop being the same thing and trimming by
+     * the clock would empty the window the moment the hand paused.
+     *
+     * Two samples are always kept so the window means the same thing at any
+     * frame rate, and it is the two *newest* — which is also what stops a
+     * finished gesture coming back to life. A hand resting on a mouse produces
+     * the odd pixel of movement, and that resets `still`; measuring from the
+     * front of a longer window would then hand back a sweep that ended half a
+     * second ago at the speed it was travelling then. Measuring the last frame
+     * of movement over the length of the pause gives a couple of px/s instead.
+     */
+    const handMoved = Math.abs(world.mouse.x - g.mx) > 0.01 ||
+                      Math.abs(world.mouse.y - g.my) > 0.01;
+    g.mx = world.mouse.x; g.my = world.mouse.y;
+    if (handMoved) {
+      g.still = 0;
+      g.hist.push({ x: nx, lift: nlift, t: world.time });
+      while (g.hist.length > 2 &&
+             g.hist[g.hist.length - 1].t - g.hist[0].t > THROW_WINDOW) g.hist.shift();
+    } else {
+      g.still += dt;
+      /*
+       * The hand has stopped. If what it was doing was a throw, this is the
+       * moment of the throw — waiting for the button means the pet sits frozen
+       * under a finger that has already finished with it, for however long the
+       * pointing device takes to notice (158-200ms on a trackpad). See the note
+       * by FLICK_SETTLE.
+       */
+      if (g.still >= FLICK_SETTLE && gestureOf(g).speed >= FLICK_MIN) {
+        releaseGrab(world);
+        return;
+      }
+    }
 
     // swing it about and it fights harder, which is the whole reason the carry
     // speed is tracked at all rather than only sampled at the release
@@ -992,27 +1157,76 @@
   }
 
   /*
-   * The throw: the gesture that just happened, not the frame it ended on.
+   * The gesture in the window: where the pet went, over how long, and how fast.
    *
-   * Displacement across the kept window over that window's own duration, capped
-   * as a *speed* rather than per axis — a per-axis cap lets a diagonal fling out
-   * at √2 times the limit, so the hardest throw in the lane is a corner one.
+   * Displacement across the kept window of movement over that window's own
+   * duration. Read twice — once to decide whether a hand that has stopped was
+   * throwing (see FLICK_MIN) and once to do the throwing.
    */
-  function throwFrom(world, pet, g) {
+  function gestureOf(g) {
     const a = g.hist[0], b = g.hist[g.hist.length - 1];
     const span = a && b ? b.t - a.t : 0;
-    if (!span) { pet.vx = 0; pet.vy = 0; pet.spin = 0; return; }
+    if (!span) return { vx: 0, vy: 0, span: 0, speed: 0 };
+    const vx = (b.x - a.x) / span;
+    const vy = (a.lift - b.lift) / span; // lift is up, vy is down
+    return { vx, vy, span, speed: Math.hypot(vx, vy) };
+  }
 
-    let vx = (b.x - a.x) / span;
-    let vy = (a.lift - b.lift) / span; // lift is up, vy is down
-    const speed = Math.hypot(vx, vy);
-    if (speed > THROW_MAX) { vx *= THROW_MAX / speed; vy *= THROW_MAX / speed; }
+  /* how much of the gesture a hand that has been resting still gets to keep */
+  function graceOf(g) {
+    if (g.still >= THROW_GRACE_ZERO) return 0;
+    return Math.pow(0.5, Math.max(0, g.still - THROW_GRACE_FULL) / THROW_HALF_LIFE);
+  }
+
+  /*
+   * The throw: the gesture that just happened, not the frame it ended on.
+   *
+   * Capped as a *speed* rather than per axis — a per-axis cap lets a diagonal
+   * fling out at √2 times the limit, so the hardest throw in the lane would be a
+   * corner one — and then faded by how long the hand has been resting, which is
+   * what keeps "sweep, slow down, release" a lob and "hold it there, then
+   * release" a set-down.
+   *
+   * Capped first and faded second: the cap says what the hardest throw in the
+   * lane is, and the fade says what fraction of a throw this release was. That
+   * order used to matter for its own sake — fading first hid the fade behind the
+   * cap for the very gestures that needed it — and it no longer can, because the
+   * flick release took the fast gestures away from the fade. Anything over
+   * FLICK_MIN leaves when it stops moving, so what still reaches the fade is slow
+   * enough that the cap was never going to bind. Kept in the honest order rather
+   * than defended by a test that could not fail.
+   */
+  function throwFrom(world, pet, g) {
+    const { vx: gx, vy: gy, span, speed } = gestureOf(g);
+    const grace = graceOf(g);
+    if (!span || !grace) { pet.vx = 0; pet.vy = 0; pet.spin = 0; return; }
+
+    const scale = (speed > THROW_MAX ? THROW_MAX / speed : 1) * grace;
+    const vx = gx * scale, vy = gy * scale;
 
     pet.vx = vx;
     pet.vy = vy;
     // thrown to the right, rolls to the right: canvas y is down, so clockwise
     // is a positive angle
     pet.spin = clamp(vx * SPIN_PER_SPEED, -SPIN_MAX, SPIN_MAX);
+
+    /*
+     * One line per throw, because the two things that decide how a release feels
+     * are both invisible from the outside: how long the hand had already been
+     * still when the button came up, and what the gesture measured. Release
+     * latency belongs to the pointing device — a trackpad suppresses the end of a
+     * flick as the finger lifts — so when a throw feels wrong on someone's
+     * machine, this is the difference between measuring it and guessing.
+     */
+    if (world.opts.debug) {
+      // a release with the button still down is a flick that ended before the
+      // gesture did — worth saying, because it is the interesting one
+      console.log(`[throw]${world.mouse.active ? ' flick' : ''}` +
+        ` still ${Math.round(g.still * 1000)}ms` +
+        ` gesture ${Math.round(speed)}px/s` +
+        ` x${grace.toFixed(2)} -> ${Math.round(Math.hypot(vx, vy))}px/s` +
+        ` over ${g.hist.length} samples of ${Math.round(span * 1000)}ms`);
+    }
   }
 
   /* let go, and it is an object with a mass until it stops moving */
@@ -1062,7 +1276,8 @@
     // out of bounces but not out of speed: it skids, still rolling, and the
     // floor takes the rest of the throw off it at a steady rate
     if (Math.abs(pet.vx) > SLIDE_MIN) {
-      const shed = GROUND_FRICTION * dt;
+      const v = Math.abs(pet.vx);
+      const shed = (GROUND_FRICTION + GROUND_GOVERNOR * v * v * v) * dt;
       pet.vx = Math.abs(pet.vx) <= shed ? 0 : pet.vx - Math.sign(pet.vx) * shed;
       if (Math.random() < 0.25) landDust(world, pet, 0);
       return;
@@ -1800,6 +2015,7 @@
       parent: document.body,
       onHoverChange: null,  // (hovering:boolean) — used by the desktop overlay
       onPetClick: null,     // (session) — tap a pet, jump to its session
+      debug: false,         // log what each release measured — see throwFrom()
     }, userOpts || {});
 
     const world = createWorld(opts);
@@ -1886,12 +2102,21 @@
        * simply holding still for the timeout below — and the mouseup is
        * delivered to whatever is underneath instead, leaving a pet stuck to the
        * cursor with no way to put it down.
+       *
+       * `world.pressed` is the same promise held a moment longer, and it exists
+       * because a flick now leaves before the button does: between the throw and
+       * the mouseup there is no grab, but the finger is still down and still
+       * moving. Handing that half of a drag to whatever is underneath is the
+       * failure above wearing a different hat — this time the stray events land
+       * in someone else's window.
        */
-      setHover(!!g || !!hitTest(world, world.mouse.x, world.mouse.y));
+      const holding = !!g || world.pressed;
+      setHover(holding || !!hitTest(world, world.mouse.x, world.mouse.y));
       clearTimeout(hoverTimeout);
-      if (!g) hoverTimeout = setTimeout(() => onLeave(), 2500);
+      if (!holding) hoverTimeout = setTimeout(() => onLeave(), 2500);
     }
     function onLeave() {
+      world.pressed = false;
       releaseGrab(world); // the pointer is gone, so no release is coming
       world.mouse.x = -9999; world.mouse.y = -9999; world.mouse.active = false;
       setHover(false);
@@ -1904,13 +2129,19 @@
       // hist is where the pointer has been, which is what the release is
       // measured from rather than the frame it happens to land on
       if (pet) {
+        // held until the mouseup whatever becomes of the grab: see onMove
+        world.pressed = true;
         world.grab = {
-          pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0, hist: [],
+          pet, moved: false, x0: world.mouse.x, y0: world.mouse.y, dx: 0, dy: 0,
+          // hist is the pet's positions on the frames the hand moved; still is how
+          // long since it last did; mx/my is where it was when it last did
+          hist: [], still: 0, mx: world.mouse.x, my: world.mouse.y,
         };
       }
     }
     function onUp() {
       world.mouse.active = false;
+      world.pressed = false;
       const g = releaseGrab(world);
       if (g && !g.moved && g.pet.session && opts.onPetClick) opts.onPetClick(g.pet.session);
       setHover(!!hitTest(world, world.mouse.x, world.mouse.y));
